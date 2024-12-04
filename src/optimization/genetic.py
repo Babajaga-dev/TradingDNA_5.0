@@ -5,8 +5,135 @@ from src.models.gene import TradingGene
 from src.models.simulator import TradingSimulator, TimeFrame
 from src.utils.config import config
 import pandas as pd
+from datetime import datetime
 
 class GeneticOptimizer:
+    
+
+    def evaluate_population(self, simulator: TradingSimulator) -> List[Tuple[TradingGene, float]]:
+        results = []
+        print(f"\n{'='*80}")
+        print(f"VALUTAZIONE POPOLAZIONE - {len(self.population)} GENI")
+        print(f"{'='*80}")
+        
+        best_metrics = None
+        total_trades = 0
+        total_pnl = 0
+        
+        for i, gene in enumerate(self.population, 1):
+            print(f"\n{'>'*20} Valutazione Gene {i}/{len(self.population)} {'<'*20}")
+            print("DNA Corrente:")
+            for key, value in gene.dna.items():
+                print(f"  {key}: {value}")
+            
+            simulator.run_simulation(gene)
+            metrics = simulator.get_performance_metrics()
+            
+            print(f"\nRisultati Gene {i}:")
+            print(f"  Trade totali: {metrics['total_trades']}")
+            print(f"  Win Rate: {metrics['win_rate']*100:.1f}%")
+            print(f"  P&L: ${metrics['total_pnl']:.2f}")
+            
+            total_trades += metrics['total_trades']
+            total_pnl += metrics['total_pnl']
+            
+            fitness = self.calculate_fitness(metrics, simulator.initial_capital)
+            gene.fitness_score = fitness
+            gene.performance_history = metrics
+            results.append((gene, fitness))
+            
+            if not best_metrics or metrics['total_pnl'] > best_metrics['total_pnl']:
+                best_metrics = metrics
+                print("\n🌟 NUOVO MIGLIOR GENE TROVATO!")
+        
+        print(f"\n{'='*80}")
+        print("SOMMARIO POPOLAZIONE:")
+        print(f"Media trade per gene: {total_trades/len(self.population):.1f}")
+        print(f"Media P&L per gene: ${total_pnl/len(self.population):.2f}")
+        
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
+    def create_next_generation(self, evaluated_population: List[Tuple[TradingGene, float]]):
+        print(f"\n{'='*80}")
+        print("CREAZIONE NUOVA GENERAZIONE")
+        print(f"{'='*80}")
+        
+        # Preserva i migliori geni (elite)
+        new_population = [gene for gene, _ in evaluated_population[:self.elite_size]]
+        print(f"\n🏆 Preservati {self.elite_size} geni elite")
+        
+        # Seleziona i genitori per il crossover
+        num_children = self.population_size - len(new_population)
+        parents = self.select_parents(evaluated_population, num_children)
+        print(f"\n👥 Selezionati {len(parents)} genitori per il crossover")
+        
+        # Crea nuovi geni attraverso crossover e mutazione
+        children_created = 0
+        print("\n🧬 Creazione nuovi geni...")
+        
+        while len(new_population) < self.population_size:
+            parent1, parent2 = random.sample(parents, 2)
+            child = parent1.crossover(parent2)
+            
+            print(f"\nCreazione gene figlio {children_created + 1}/{num_children}")
+            print("Parents DNA:")
+            print("  Parent 1:", {k: v for k, v in parent1.dna.items() if not isinstance(v, dict)})
+            print("  Parent 2:", {k: v for k, v in parent2.dna.items() if not isinstance(v, dict)})
+            
+            print("\nApplicazione mutazione...")
+            child.mutate(self.mutation_rate)
+            
+            print("DNA Risultante:")
+            print({k: v for k, v in child.dna.items() if not isinstance(v, dict)})
+            
+            new_population.append(child)
+            children_created += 1
+        
+        print(f"\n✅ Generazione completata:")
+        print(f"  Elite preservati: {self.elite_size}")
+        print(f"  Nuovi geni creati: {children_created}")
+        
+        self.population = new_population
+
+    def optimize(self, simulator: TradingSimulator) -> TradingGene:
+        print("\n" + "="*80)
+        print("AVVIO OTTIMIZZAZIONE GENETICA")
+        print("="*80)
+        
+        print("\nInitializzazione popolazione iniziale...")
+        self.initialize_population()
+        
+        best_fitness = float('-inf')
+        generations_without_improvement = 0
+        
+        for generation in range(self.generations):
+            print(f"\n{'#'*80}")
+            print(f"GENERAZIONE {generation + 1}/{self.generations}")
+            print(f"{'#'*80}")
+            
+            evaluated_population = self.evaluate_population(simulator)
+            current_best_fitness = evaluated_population[0][1]
+            current_best_gene = evaluated_population[0][0]
+            
+            if current_best_fitness > best_fitness:
+                improvement = ((current_best_fitness - best_fitness) / abs(best_fitness)) * 100 if best_fitness != float('-inf') else float('inf')
+                print(f"\n🎯 NUOVO RECORD! Miglioramento: {improvement:.1f}%")
+                best_fitness = current_best_fitness
+                self.best_gene = current_best_gene
+                generations_without_improvement = 0
+            else:
+                generations_without_improvement += 1
+                print(f"\n⚠️ Nessun miglioramento. Generazioni stagnanti: {generations_without_improvement}")
+            
+            if generations_without_improvement >= 10:
+                print("\n🛑 Ottimizzazione terminata per stagnazione")
+                break
+                
+            self.create_next_generation(evaluated_population)
+            
+        return self.best_gene
+
     def __init__(self):
         # Carica i parametri dal file di configurazione
         self.population_size = config.get("genetic.population_size", 100)
@@ -36,10 +163,45 @@ class GeneticOptimizer:
         self.population = []
         self.best_gene = None
         self.generation_stats = []
-
-    def initialize_population(self):
-        self.population = [TradingGene() for _ in range(self.population_size)]
+            # Aggiungiamo logging configurazione
+        print("\n" + "="*50)
+        print("CONFIGURAZIONE OTTIMIZZATORE GENETICO")
+        print("="*50)
+        print(f"Popolazione: {self.population_size}")
+        print(f"Generazioni: {self.generations}")
+        print(f"Tasso mutazione: {self.mutation_rate*100}%")
+        print(f"Elite size: {self.elite_size}")
+        print(f"Tournament size: {self.tournament_size}")
+        print(f"Min trades: {self.min_trades}")
+        print("\nPESI FITNESS:")
+        print("  Profit Score:")
+        print(f"    Total PNL: {self.weights['profit_score']['total_pnl']}")
+        print(f"    Max Drawdown: {self.weights['profit_score']['max_drawdown']}")
+        print(f"    Sharpe Ratio: {self.weights['profit_score']['sharpe_ratio']}")
+        print("  Quality Score:")
+        print(f"    Win Rate: {self.weights['quality_score']['win_rate']}")
+        print(f"    Trade Frequency: {self.weights['quality_score']['trade_frequency']}")
+        print("  Final Weights:")
+        print(f"    Profit: {self.weights['final']['profit']}")
+        print(f"    Quality: {self.weights['final']['quality']}")
     
+    def initialize_population(self):
+        """Inizializza la popolazione con geni casuali"""
+        print("\nCreazione popolazione iniziale...")
+        self.population = []
+        
+        # Il primo gene usa la configurazione di default
+        self.population.append(TradingGene(random_init=False))
+        print("Gene 1: Configurazione di default")
+        
+        # Il resto della popolazione è casuale
+        for i in range(1, self.population_size):
+            gene = TradingGene(random_init=True)
+            self.population.append(gene)
+            print(f"Gene {i+1}: Configurazione casuale generata")
+            
+        print(f"\nPopolazione iniziale creata: {len(self.population)} geni")   
+        
     def calculate_fitness(self, metrics: Dict, initial_capital: float) -> float:
         """Calcola il fitness di un gene basato sulle sue performance"""
         if metrics["total_trades"] < self.min_trades:
@@ -71,127 +233,6 @@ class GeneticOptimizer:
             winner = max(tournament, key=lambda x: x[1])[0]
             parents.append(winner)
         return parents
-    
-    def create_next_generation(self, evaluated_population: List[Tuple[TradingGene, float]]):
-        """Crea la prossima generazione di geni"""
-        new_population = [gene for gene, _ in evaluated_population[:self.elite_size]]
-        
-        num_children = self.population_size - len(new_population)
-        parents = self.select_parents(evaluated_population, num_children)
-        
-        while len(new_population) < self.population_size:
-            parent1, parent2 = random.sample(parents, 2)
-            child = parent1.crossover(parent2)
-            child.mutate(self.mutation_rate)
-            new_population.append(child)
-        
-        self.population = new_population
-    
-    def evaluate_population(self, simulator: TradingSimulator) -> List[Tuple[TradingGene, float]]:
-        results = []
-        print(f"\nValutazione popolazione di {len(self.population)} geni...")
-        
-        for i, gene in enumerate(self.population, 1):
-            if i % 10 == 0:  # Stampa progresso ogni 10 geni
-                print(f"Valutazione gene {i}/{len(self.population)}")
-            
-            simulator.run_simulation(gene)
-            metrics = simulator.get_performance_metrics()
-            
-            # Stampa metriche del gene corrente
-            if i % 10 == 0:
-                print(f"  Trade totali: {metrics['total_trades']}")
-                print(f"  Win Rate: {metrics['win_rate']*100:.1f}%")
-                print(f"  P&L: ${metrics['total_pnl']:.2f}")
-                print(f"  Max Drawdown: {metrics['max_drawdown']*100:.1f}%")
-            
-            fitness = self.calculate_fitness(metrics, simulator.initial_capital)
-            gene.fitness_score = fitness
-            gene.performance_history = metrics
-            results.append((gene, fitness))
-        
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results
-    
-    def optimize(self, simulator: TradingSimulator) -> TradingGene:
-        """Esegue l'ottimizzazione genetica completa"""
-        print("\n" + "="*50)
-        print("OTTIMIZZAZIONE GENETICA")
-        print("="*50)
-        
-        print("\nInizializzazione popolazione...")
-        self.initialize_population()
-        
-        # Statistiche dataset
-        data_info = simulator.market_data[TimeFrame.M1]
-        start_date = data_info[0].timestamp
-        end_date = data_info[-1].timestamp
-        n_candles = len(data_info)
-        
-        print("\nDATASET:")
-        print(f"  Periodo: {start_date} -> {end_date}")
-        print(f"  Candele: {n_candles}")
-        print(f"  Timeframe: {TimeFrame.M1.value}")
-        
-        print("\nPARAMETRI:")
-        print(f"  Popolazione: {self.population_size}")
-        print(f"  Generazioni: {self.generations}")
-        print(f"  Mutazione: {self.mutation_rate*100}%")
-        print(f"  Elite: {self.elite_size}")
-        print(f"  Capitale: ${simulator.initial_capital}")
-        
-        best_fitness = float('-inf')
-        generations_without_improvement = 0
-        
-        for generation in range(self.generations):
-            print(f"\n{'='*50}")
-            print(f"Generazione {generation + 1}/{self.generations}")
-            print(f"{'='*50}")
-            
-            evaluated_population = self.evaluate_population(simulator)
-            current_best_fitness = evaluated_population[0][1]
-            current_best_gene = evaluated_population[0][0]
-            
-            # Stampa dettagli del miglior gene della generazione
-            print("\nMiglior gene della generazione:")
-            metrics = current_best_gene.performance_history
-            print(f"  Trades: {metrics['total_trades']}")
-            print(f"  Win Rate: {metrics['win_rate']*100:.1f}%")
-            print(f"  P&L: ${metrics['total_pnl']:.2f}")
-            print(f"  Max Drawdown: {metrics['max_drawdown']*100:.1f}%")
-            print(f"  Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-            
-            if current_best_fitness > best_fitness:
-                improvement = ((current_best_fitness - best_fitness) / abs(best_fitness)) * 100 if best_fitness != float('-inf') else float('inf')
-                print(f"\n🎯 Nuovo miglior gene trovato! Miglioramento: {improvement:.1f}%")
-                best_fitness = current_best_fitness
-                self.best_gene = current_best_gene
-                generations_without_improvement = 0
-            else:
-                generations_without_improvement += 1
-                print(f"\nGenerazioni senza miglioramenti: {generations_without_improvement}")
-            
-            avg_fitness = np.mean([fitness for _, fitness in evaluated_population])
-            self.generation_stats.append({
-                'generation': generation + 1,
-                'best_fitness': current_best_fitness,
-                'avg_fitness': avg_fitness,
-                'best_pnl': metrics['total_pnl']
-            })
-            
-            print(f"\nStatistiche generazione:")
-            print(f"  Miglior Fitness: {current_best_fitness:.4f}")
-            print(f"  Fitness Media: {avg_fitness:.4f}")
-            print(f"  Miglior P&L: ${metrics['total_pnl']:.2f}")
-            
-            if generations_without_improvement >= 10:
-                print("\n⚠️ Ottimizzazione terminata per mancanza di miglioramenti")
-                break
-            
-            self.create_next_generation(evaluated_population)
-        
-        return self.best_gene
-
 
 def run_genetic_trading_system(market_data: pd.DataFrame, 
                              timeframe: TimeFrame = TimeFrame.M1):

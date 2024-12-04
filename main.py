@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from src.optimization.genetic_parallel import run_parallel_genetic_trading_system
 from src.utils.data_loader import load_and_prepare_data
 from src.optimization.genetic import run_genetic_trading_system
 from src.models.simulator import TimeFrame
@@ -64,7 +65,7 @@ def main():
     
     # Esegui l'ottimizzazione
     print("\nAvvio ottimizzazione genetica...")
-    best_gene, optimizer = run_genetic_trading_system(
+    best_gene, optimizer = run_parallel_genetic_trading_system (
         market_data=data_dict['1m'],
         timeframe=TimeFrame.M1
     )
