@@ -1,39 +1,73 @@
 import random
 import numpy as np
 from typing import List, Tuple, Dict
-from src.models.gene import TradingGene  # Changed from relative to absolute import
-from src.models.simulator import TradingSimulator, TimeFrame  # Changed from relative to absolute import
+from src.models.gene import TradingGene
+from src.models.simulator import TradingSimulator, TimeFrame
+from src.utils.config import config
 import pandas as pd
 
 class GeneticOptimizer:
+    def __init__(self):
+        # Carica i parametri dal file di configurazione
+        self.population_size = config.get("genetic.population_size", 100)
+        self.generations = config.get("genetic.generations", 50)
+        self.mutation_rate = config.get("genetic.mutation_rate", 0.1)
+        self.elite_size = config.get("genetic.elite_size", 10)
+        self.tournament_size = config.get("genetic.tournament_size", 5)
+        self.min_trades = config.get("genetic.min_trades", 10)
+        
+        # Pesi per il calcolo del fitness
+        self.weights = {
+            "profit_score": {
+                "total_pnl": config.get("genetic.fitness_weights.profit_score.total_pnl", 0.4),
+                "max_drawdown": config.get("genetic.fitness_weights.profit_score.max_drawdown", 0.3),
+                "sharpe_ratio": config.get("genetic.fitness_weights.profit_score.sharpe_ratio", 0.3)
+            },
+            "quality_score": {
+                "win_rate": config.get("genetic.fitness_weights.quality_score.win_rate", 0.6),
+                "trade_frequency": config.get("genetic.fitness_weights.quality_score.trade_frequency", 0.4)
+            },
+            "final": {
+                "profit": config.get("genetic.fitness_weights.final_weights.profit", 0.6),
+                "quality": config.get("genetic.fitness_weights.final_weights.quality", 0.4)
+            }
+        }
+        
+        self.population = []
+        self.best_gene = None
+        self.generation_stats = []
 
     def initialize_population(self):
         self.population = [TradingGene() for _ in range(self.population_size)]
     
-    def calculate_fitness(self, metrics: Dict) -> float:
+    def calculate_fitness(self, metrics: Dict, initial_capital: float) -> float:
         """Calcola il fitness di un gene basato sulle sue performance"""
-        if metrics["total_trades"] < 10:
+        if metrics["total_trades"] < self.min_trades:
             return 0
             
+        # Calcola profit score
         profit_score = (
-            min(1, metrics["total_pnl"] / (metrics["final_capital"] - 10000)) * 0.4 +
-            (1 - metrics["max_drawdown"]) * 0.3 +
-            max(0, metrics["sharpe_ratio"]) * 0.3
+            min(1, metrics["total_pnl"] / initial_capital) * self.weights["profit_score"]["total_pnl"] +  
+            (1 - metrics["max_drawdown"]) * self.weights["profit_score"]["max_drawdown"] +
+            max(0, metrics["sharpe_ratio"]) * self.weights["profit_score"]["sharpe_ratio"]
         )
         
+        # Calcola quality score
         quality_score = (
-            metrics["win_rate"] * 0.6 +
-            min(1, metrics["total_trades"] / 100) * 0.4
+            metrics["win_rate"] * self.weights["quality_score"]["win_rate"] +
+            min(1, metrics["total_trades"] / 100) * self.weights["quality_score"]["trade_frequency"]
         )
         
-        return (profit_score * 0.6 + quality_score * 0.4)
+        # Calcola score finale
+        return (profit_score * self.weights["final"]["profit"] + 
+                quality_score * self.weights["final"]["quality"])
     
     def select_parents(self, evaluated_population: List[Tuple[TradingGene, float]], 
                       num_parents: int) -> List[TradingGene]:
         """Seleziona i genitori usando il metodo del torneo"""
         parents = []
         for _ in range(num_parents):
-            tournament = random.sample(evaluated_population, 5)
+            tournament = random.sample(evaluated_population, self.tournament_size)
             winner = max(tournament, key=lambda x: x[1])[0]
             parents.append(winner)
         return parents
@@ -52,19 +86,6 @@ class GeneticOptimizer:
             new_population.append(child)
         
         self.population = new_population
-
-    def __init__(self, 
-                 population_size: int = 100, 
-                 generations: int = 50,
-                 mutation_rate: float = 0.1,
-                 elite_size: int = 10):
-        self.population_size = population_size
-        self.generations = generations
-        self.mutation_rate = mutation_rate
-        self.elite_size = elite_size
-        self.population = []
-        self.best_gene = None
-        self.generation_stats = []
     
     def evaluate_population(self, simulator: TradingSimulator) -> List[Tuple[TradingGene, float]]:
         results = []
@@ -84,7 +105,7 @@ class GeneticOptimizer:
                 print(f"  P&L: ${metrics['total_pnl']:.2f}")
                 print(f"  Max Drawdown: {metrics['max_drawdown']*100:.1f}%")
             
-            fitness = self.calculate_fitness(metrics)
+            fitness = self.calculate_fitness(metrics, simulator.initial_capital)
             gene.fitness_score = fitness
             gene.performance_history = metrics
             results.append((gene, fitness))
@@ -94,16 +115,30 @@ class GeneticOptimizer:
     
     def optimize(self, simulator: TradingSimulator) -> TradingGene:
         """Esegue l'ottimizzazione genetica completa"""
+        print("\n" + "="*50)
+        print("OTTIMIZZAZIONE GENETICA")
+        print("="*50)
+        
         print("\nInizializzazione popolazione...")
         self.initialize_population()
         
-        # Stampa informazioni sul dataset
+        # Statistiche dataset
         data_info = simulator.market_data[TimeFrame.M1]
         start_date = data_info[0].timestamp
         end_date = data_info[-1].timestamp
         n_candles = len(data_info)
-        print(f"Dataset: dal {start_date} al {end_date}")
-        print(f"Numero di candele: {n_candles}")
+        
+        print("\nDATASET:")
+        print(f"  Periodo: {start_date} -> {end_date}")
+        print(f"  Candele: {n_candles}")
+        print(f"  Timeframe: {TimeFrame.M1.value}")
+        
+        print("\nPARAMETRI:")
+        print(f"  Popolazione: {self.population_size}")
+        print(f"  Generazioni: {self.generations}")
+        print(f"  Mutazione: {self.mutation_rate*100}%")
+        print(f"  Elite: {self.elite_size}")
+        print(f"  Capitale: ${simulator.initial_capital}")
         
         best_fitness = float('-inf')
         generations_without_improvement = 0
@@ -159,10 +194,7 @@ class GeneticOptimizer:
 
 
 def run_genetic_trading_system(market_data: pd.DataFrame, 
-                             timeframe: TimeFrame = TimeFrame.M1,
-                             population_size: int = 100,
-                             generations: int = 50,
-                             initial_capital: float = 10000):
+                             timeframe: TimeFrame = TimeFrame.M1):
     """Funzione principale per eseguire il sistema di trading genetico"""
     
     print("\nPreparazione dei dati...")
@@ -185,7 +217,7 @@ def run_genetic_trading_system(market_data: pd.DataFrame,
         market_data[col] = market_data[col].astype(float)
     
     # Inizializza il simulatore
-    simulator = TradingSimulator(initial_capital=initial_capital)
+    simulator = TradingSimulator()
     simulator.add_market_data(timeframe, market_data)
     
     # Verifica che i dati siano stati caricati correttamente
@@ -195,12 +227,7 @@ def run_genetic_trading_system(market_data: pd.DataFrame,
     print(f"\nDati caricati correttamente: {len(simulator.market_data[timeframe])} candele")
     
     # Crea e avvia l'ottimizzatore
-    optimizer = GeneticOptimizer(
-        population_size=population_size,
-        generations=generations,
-        mutation_rate=0.1,
-        elite_size=int(population_size * 0.1)
-    )
+    optimizer = GeneticOptimizer()
     
     print("\nAvvio ottimizzazione genetica...")
     best_gene = optimizer.optimize(simulator)
