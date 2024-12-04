@@ -30,6 +30,8 @@ class Position:
 
 class TradingSimulator:
 
+
+
     def __init__(self):
         self.initial_capital = config.get("simulator.initial_capital", 10000)
         self.capital = self.initial_capital
@@ -39,13 +41,101 @@ class TradingSimulator:
         self.current_time = None
         self.position_counter = 0
         self.equity_curve = []
+
+    def get_available_capital(self) -> float:
+        """Calcola il capitale disponibile per nuove posizioni"""
+        committed_capital = sum(
+            pos.size * pos.entry_price 
+            for pos in self.positions.values()
+        )
+        return self.capital - committed_capital
+        
+    def can_open_position(self, position_size_pct: float, price: float) -> bool:
+        """
+        Verifica se è possibile aprire una nuova posizione
+        
+        Args:
+            position_size_pct: Percentuale del capitale da utilizzare per la posizione
+            price: Prezzo di entrata
+        """
+        # Calcola il capitale necessario per la nuova posizione
+        position_capital = self.capital * (position_size_pct / 100)
+        
+        # Verifica il capitale disponibile
+        available_capital = self.get_available_capital()
+        
+        # Calcola il numero massimo di posizioni basato sulla size percentuale
+        max_positions = int(100 / position_size_pct)
+        
+        return (len(self.positions) < max_positions and 
+                available_capital >= position_capital)
+
+    def _process_signal(self, signal: Signal, current_data: MarketData, gene):
+        """Processa un segnale di trading con gestione del capitale migliorata"""
+        try:
+            if signal.type in [SignalType.LONG, SignalType.SHORT]:
+                position_size_pct = config.get("trading.position.size_pct", 5.0)
+                position_size_pct = min(position_size_pct, 100.0)
+                
+                if not self.can_open_position(position_size_pct, current_data.close):
+                    #print(f"\n[WARNING] Segnale {signal.type} ignorato - Capitale insufficiente o limite posizioni raggiunto")
+                    #print(f"  Capitale totale: ${self.capital:.2f}")
+                    #print(f"  Capitale disponibile: ${self.get_available_capital():.2f}")
+                    #print(f"  Posizioni aperte: {len(self.positions)}")
+                    return
+                
+                # Calcola la size della posizione
+                position_capital = self.capital * (position_size_pct / 100)
+                units = position_capital / current_data.close
+                units = round(units, 4)
+                
+                # Crea e registra la nuova posizione
+                position = Position(signal, current_data.close, units)
+                self.position_counter += 1
+                self.positions[f"pos_{self.position_counter}"] = position
+                
+                #print(f"\n[INFO] Nuova posizione aperta:")
+                #print(f"  Tipo: {signal.type}")
+                #print(f"  Prezzo: ${current_data.close:.2f}")
+                #print(f"  Size: {units:.4f}")
+                #print(f"  Capitale impegnato: ${position_capital:.2f}")
+            
+            elif signal.type == SignalType.EXIT:
+                for pos_id in list(self.positions.keys()):
+                    self.close_position(pos_id, current_data.close, current_data.timestamp)
+                    
+        except Exception as e:
+            #print(f"\nError processing signal: {str(e)}")
+            raise
+
+    def close_position(self, position_id: str, exit_price: float, exit_time: datetime):
+        """Chiude una posizione e aggiorna il capitale"""
+        if position_id not in self.positions:
+            #print(f"Warning: Tentativo di chiudere posizione inesistente {position_id}")
+            return
+            
+        position = self.positions.pop(position_id)
+        position.close(exit_price, exit_time)
+        self.historical_positions.append(position)
+        
+        # Aggiorna il capitale dopo la chiusura della posizione
+        self.capital += position.pnl
+        self.equity_curve.append((exit_time, self.capital))
+        
+        #print(f"\n[INFO] Posizione chiusa:")
+        #print(f"  ID: {position_id}")
+        #print(f"  P&L: ${position.pnl:.2f}")
+        #print(f"  Capitale aggiornato: ${self.capital:.2f}")
+
+
+
         
     def add_market_data(self, timeframe: TimeFrame, data: pd.DataFrame):
         """Aggiunge dati di mercato per un specifico timeframe"""
-        print(f"Adding market data for timeframe {timeframe.value}")
-        print(f"Data shape: {data.shape}")
-        print(f"First timestamp: {data['timestamp'].iloc[0]}")
-        print(f"Last timestamp: {data['timestamp'].iloc[-1]}")
+        #print(f"Adding market data for timeframe {timeframe.value}")
+        #print(f"Data shape: {data.shape}")
+        #print(f"First timestamp: {data['timestamp'].iloc[0]}")
+        #print(f"Last timestamp: {data['timestamp'].iloc[-1]}")
         
         self.market_data[timeframe] = []
         for _, row in data.iterrows():
@@ -60,59 +150,7 @@ class TradingSimulator:
             )
             self.market_data[timeframe].append(market_data)
         
-        print(f"Processed {len(self.market_data[timeframe])} candles")
-        
-    def close_position(self, position_id: str, exit_price: float, exit_time: datetime):
-        if position_id not in self.positions:
-            print(f"Warning: Tentativo di chiudere posizione inesistente {position_id}")
-            return
-            
-        position = self.positions.pop(position_id)
-        position.close(exit_price, exit_time)
-        self.historical_positions.append(position)
-        self.capital += position.pnl / 10
-        self.equity_curve.append((exit_time, self.capital))
-        
-        if len(self.historical_positions) % 10 == 0:
-            print(f"\rTrade chiuso - P&L: ${position.pnl:.2f} - Capitale: ${self.capital:.2f}")
-    
-    def _process_signal(self, signal: Signal, current_data: MarketData, gene):
-        """Processa un segnale di trading"""
-        try:
-            if signal.type in [SignalType.LONG, SignalType.SHORT]:
-                position_size_pct = config.get("trading.position.size_pct", 5.0)
-                position_size_pct = min(position_size_pct, 100.0)
-                
-                # Calcola il capitale correntemente impegnato e limiti
-                committed_capital = sum(
-                    pos.size * pos.entry_price 
-                    for pos in self.positions.values()
-                )
-                max_positions = int(100 / position_size_pct)
-                
-                print(f"\n[DEBUG] Analisi Posizione:")
-                print(f"  Capitale totale: ${self.capital:.2f}")
-                print(f"  Capitale impegnato: ${committed_capital:.2f}")
-                print(f"  Posizioni aperte: {len(self.positions)}/{max_positions}")
-                print(f"  Size per posizione: {position_size_pct}%")
-                
-                # Verifica se c'è spazio per una nuova posizione
-                if (len(self.positions) < max_positions and 
-                    committed_capital + (self.capital * (position_size_pct / 100)) <= self.capital):
-                    units = (self.capital * (position_size_pct / 100)) / current_data.close
-                    units = round(units, 4)
-                    position = Position(signal, current_data.close, units)
-                    self.position_counter += 1
-                    self.positions[f"pos_{self.position_counter}"] = position
-            
-            elif signal.type == SignalType.EXIT:
-                for pos_id in list(self.positions.keys()):
-                    self.close_position(pos_id, current_data.close, current_data.timestamp)
-                    
-        except Exception as e:
-            print(f"\nError processing signal: {str(e)}")
-            raise
-        
+        #print(f"Processed {len(self.market_data[timeframe])} candles")
     
     def run_simulation(self, gene):
         """Esegue la simulazione per un specifico gene"""
@@ -124,7 +162,7 @@ class TradingSimulator:
         if not self.market_data[TimeFrame.M1]:
             raise ValueError("Nessun dato al minuto trovato")
             
-        print(f"\nAvvio simulazione con {len(self.market_data[TimeFrame.M1])} candele")
+        #print(f"\nAvvio simulazione con {len(self.market_data[TimeFrame.M1])} candele")
         
         self.capital = self.initial_capital
         self.positions.clear()
@@ -142,9 +180,9 @@ class TradingSimulator:
                 if i % progress_interval == 0:
                     progress = (i / total_candles) * 100
                     current_profit = self.capital - self.initial_capital
-                    print(f"\rProgresso: {progress:.1f}% - P&L: ${current_profit:.2f} - "
-                          f"Trade aperti: {len(self.positions)} - "
-                          f"Segnali generati: {signals_generated}", end="")
+                    #print(f"\rProgresso: {progress:.1f}% - P&L: ${current_profit:.2f} - "
+                    #      f"Trade aperti: {len(self.positions)} - "
+                     #     f"Segnali generati: {signals_generated}", end="")
                 
                 self._update_positions(current_data)
                 
@@ -160,33 +198,10 @@ class TradingSimulator:
                         self._process_signal(signal, current_data, gene)
                         
             except Exception as e:
-                print(f"\nError during simulation at candle {i}: {str(e)}")
+                #print(f"\nError during simulation at candle {i}: {str(e)}")
                 raise
         
-        print("\nSimulazione completata")
-        
-    def _process_signal(self, signal: Signal, current_data: MarketData, gene):
-        """Processa un segnale di trading"""
-        try:
-            if signal.type in [SignalType.LONG, SignalType.SHORT]:
-                # Calcola la size basata sulla percentuale del capitale
-                position_size_pct = config.get("trading.position.size_pct", 5.0)
-                # Limita la size a un massimo del 100% del capitale
-                position_size_pct = min(position_size_pct, 100.0)
-                # Calcola il numero di unità in base al prezzo corrente
-                units = (self.capital * (position_size_pct / 100)) / current_data.close
-                # Arrotonda le unità a 4 decimali per evitare problemi di precisione
-                units = round(units, 4)
-                position = Position(signal, current_data.close, units)
-                self.position_counter += 1
-                self.positions[f"pos_{self.position_counter}"] = position
-            
-            elif signal.type == SignalType.EXIT:
-                for pos_id in list(self.positions.keys()):
-                    self.close_position(pos_id, current_data.close, current_data.timestamp)
-        except Exception as e:
-            print(f"\nError processing signal: {str(e)}")
-            raise
+        #print("\nSimulazione completata")
             
     def _update_positions(self, current_data: MarketData):
         """Aggiorna lo stato delle posizioni aperte"""
@@ -212,7 +227,7 @@ class TradingSimulator:
                         self.close_position(pos_id, position.entry_signal.take_profit, 
                                          current_data.timestamp)
             except Exception as e:
-                print(f"\nError updating position {pos_id}: {str(e)}")
+                #print(f"\nError updating position {pos_id}: {str(e)}")
                 raise
     
     def get_performance_metrics(self) -> Dict:
