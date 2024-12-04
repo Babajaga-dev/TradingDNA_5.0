@@ -3,6 +3,7 @@ from enum import Enum
 import numpy as np
 import talib
 from src.models.common import Signal, SignalType, MarketData
+from src.utils.config import config
 
 class Operator(Enum):
     GREATER = ">"
@@ -22,25 +23,26 @@ class TradingGene:
             "CLOSE": lambda x: x
         }
 
+        # Carica i parametri dal file di configurazione
         self.dna = {
             # Indicatori di entrata
-            "entry_indicator1": "SMA",
-            "entry_indicator1_params": {"timeperiod": 20},
-            "entry_indicator2": "SMA",
-            "entry_indicator2_params": {"timeperiod": 50},
-            "entry_operator": Operator.CROSS_ABOVE,
+            "entry_indicator1": config.get("trading.indicators.entry.indicator1.type", "SMA"),
+            "entry_indicator1_params": config.get("trading.indicators.entry.indicator1.params", {"timeperiod": 20}),
+            "entry_indicator2": config.get("trading.indicators.entry.indicator2.type", "SMA"),
+            "entry_indicator2_params": config.get("trading.indicators.entry.indicator2.params", {"timeperiod": 50}),
+            "entry_operator": Operator(config.get("trading.indicators.entry.operator", "cross_above")),
             
             # Indicatori di uscita
-            "exit_indicator1": "RSI",
-            "exit_indicator1_params": {"timeperiod": 14},
-            "exit_indicator2": "CLOSE",
-            "exit_indicator2_params": {},
-            "exit_operator": Operator.GREATER,
+            "exit_indicator1": config.get("trading.indicators.exit.indicator1.type", "RSI"),
+            "exit_indicator1_params": config.get("trading.indicators.exit.indicator1.params", {"timeperiod": 14}),
+            "exit_indicator2": config.get("trading.indicators.exit.indicator2.type", "CLOSE"),
+            "exit_indicator2_params": config.get("trading.indicators.exit.indicator2.params", {}),
+            "exit_operator": Operator(config.get("trading.indicators.exit.operator", ">")),
             
             # Parametri di risk management
-            "stop_loss_pct": 2.0,
-            "take_profit_pct": 4.0,
-            "position_size_pct": 1.0
+            "stop_loss_pct": config.get("trading.position.stop_loss_pct", 2.0),
+            "take_profit_pct": config.get("trading.position.take_profit_pct", 4.0),
+            "position_size_pct": config.get("trading.position.size_pct", 5.0)
         }
         
         self.fitness_score = None
@@ -52,13 +54,25 @@ class TradingGene:
             if np.random.random() < mutation_rate:
                 if key.endswith('_params'):
                     for param in self.dna[key]:
-                        self.dna[key][param] *= np.random.uniform(0.8, 1.2)
+                        # Limita la mutazione dei parametri degli indicatori
+                        self.dna[key][param] = max(5, min(200, 
+                            self.dna[key][param] * np.random.uniform(0.8, 1.2)))
                 elif key.endswith('_indicator1') or key.endswith('_indicator2'):
                     self.dna[key] = np.random.choice(list(self.available_indicators.keys()))
                 elif key.endswith('_operator'):
                     self.dna[key] = np.random.choice(list(Operator))
-                elif key.endswith('_pct'):
-                    self.dna[key] *= np.random.uniform(0.8, 1.2)
+                elif key == "position_size_pct":
+                    # Limita il position size tra 1% e 20% del capitale
+                    new_size = self.dna[key] * np.random.uniform(0.8, 1.2)
+                    self.dna[key] = max(1.0, min(20.0, new_size))
+                elif key == "stop_loss_pct":
+                    # Limita lo stop loss tra 0.5% e 5%
+                    new_sl = self.dna[key] * np.random.uniform(0.8, 1.2)
+                    self.dna[key] = max(0.5, min(5.0, new_sl))
+                elif key == "take_profit_pct":
+                    # Limita il take profit tra 1% e 10%
+                    new_tp = self.dna[key] * np.random.uniform(0.8, 1.2)
+                    self.dna[key] = max(1.0, min(10.0, new_tp))
 
     def calculate_indicator(self, prices: np.ndarray, indicator: str, params: Dict) -> np.ndarray:
         """Calcola un indicatore sui prezzi"""
@@ -80,8 +94,9 @@ class TradingGene:
     def generate_signals(self, market_data: List[MarketData]) -> List[Signal]:
         """Genera segnali basati sulle condizioni del gene"""
         signals = []
+        min_candles = config.get("simulator.min_candles", 50)
         
-        if len(market_data) < 50:  # Minimo di dati necessari
+        if len(market_data) < min_candles:  # Minimo di dati necessari
             return signals
 
         # Converti i dati in array numpy per gli indicatori

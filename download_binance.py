@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 from binance.client import Client
 import time
+from src.utils.config import config
 
 class BinanceDataDownloader:
     def __init__(self, api_key: str = '', api_secret: str = ''):
@@ -12,7 +13,7 @@ class BinanceDataDownloader:
         Le chiavi non sono necessarie per i dati storici, ma sono utili per aumentare i rate limits.
         """
         self.client = Client(api_key, api_secret)
-        self.BATCH_SIZE = 1000  # Dimensione del batch per richiesta
+        self.BATCH_SIZE = config.get("download.batch_size", 1000)
         
     def download_historical_data(
         self,
@@ -23,7 +24,7 @@ class BinanceDataDownloader:
         output_folder: str = 'data'
     ) -> str:
         """
-        Scarica i dati storici da Binance in batch da 1000 elementi.
+        Scarica i dati storici da Binance in batch.
         
         Args:
             symbol: Simbolo trading (es. 'BTCUSDT')
@@ -130,7 +131,7 @@ class BinanceDataDownloader:
                 print(f"Gap from {gap_start} to {gap_end}")
         
         # Salva il file
-        output_file = output_path / f"market_data.csv"
+        output_file = output_path / f"market_data_{symbol.replace('USDT', '')}_1m.csv"
         df.to_csv(output_file, index=False)
         print(f"\nData saved to {output_file}")
         print(f"Downloaded {len(df)} candlesticks")
@@ -138,22 +139,33 @@ class BinanceDataDownloader:
         return str(output_file)
 
 def main():
-    # Configura i parametri
-    SYMBOL = "BTCUSDT"  # Simbolo da scaricare
-    INTERVAL = "1m"     # Intervallo (1m, 5m, 15m, 1h, 4h, 1d)
-    START_DATE = "2024-01-01"  # Data di inizio
-    END_DATE = None     # Data di fine (None per scaricare fino ad ora)
+    # Carica i parametri dalla configurazione
+    symbol = config.get("download.symbol", "BTCUSDT")
+    interval = config.get("download.interval", "1m")
+    start_date = config.get("download.start_date", "2024-01-01")
+    end_date = config.get("download.end_date")
+    output_folder = config.get("download.output_folder", "data")
+    api_key = config.get("download.api.key", "")
+    api_secret = config.get("download.api.secret", "")
+    
+    print("\nParametri di configurazione:")
+    print(f"Symbol: {symbol}")
+    print(f"Interval: {interval}")
+    print(f"Start Date: {start_date}")
+    print(f"End Date: {end_date or 'now'}")
+    print(f"Output Folder: {output_folder}")
     
     # Inizializza il downloader
-    downloader = BinanceDataDownloader()
+    downloader = BinanceDataDownloader(api_key, api_secret)
     
     try:
         # Scarica i dati
         output_file = downloader.download_historical_data(
-            symbol=SYMBOL,
-            interval=INTERVAL,
-            start_date=START_DATE,
-            end_date=END_DATE
+            symbol=symbol,
+            interval=interval,
+            start_date=start_date,
+            end_date=end_date,
+            output_folder=output_folder
         )
         
         print(f"\nDownload completato! I dati sono stati salvati in: {output_file}")

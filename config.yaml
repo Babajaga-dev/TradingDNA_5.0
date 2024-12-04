@@ -1,0 +1,65 @@
+# Configurazione del Trading System
+
+simulator:
+  initial_capital: 10000  # Capitale iniziale per il trading
+  min_candles: 50        # Numero minimo di candele necessarie per gli indicatori
+  data_file: "market_data_BTC_1m.csv"  # Nome del file dati da utilizzare
+
+trading:
+  position:
+    size_pct: 5 #5.0        # Percentuale del capitale per posizione (1-20%)
+    stop_loss_pct: 3.0 #2.0   # Percentuale stop loss (0.5-5%)
+    take_profit_pct: 6.0 #4.0 # Percentuale take profit (1-10%)
+  
+  indicators:
+    entry:
+      indicator1:
+        type: "SMA"
+        params:
+          timeperiod: 20
+      indicator2:
+        type: "SMA"
+        params:
+          timeperiod: 50
+      operator: "cross_above"  # Possibili valori: ">", "<", "cross_above", "cross_below"
+    
+    exit:
+      indicator1:
+        type: "RSI"
+        params:
+          timeperiod: 14
+      indicator2:
+        type: "CLOSE"
+        params: {}
+      operator: ">"
+
+genetic:
+  population_size: 100    # Dimensione della popolazione
+  generations: 50         # Numero di generazioni
+  mutation_rate: 0.1      # Tasso di mutazione (0-1)
+  elite_size: 10         # Numero di migliori individui da preservare
+  tournament_size: 5      # Dimensione del torneo per la selezione
+  min_trades: 10         # Numero minimo di trade per considerare valido un gene
+  
+  fitness_weights:
+    profit_score:
+      total_pnl: 0.4
+      max_drawdown: 0.3
+      sharpe_ratio: 0.3
+    quality_score:
+      win_rate: 0.6
+      trade_frequency: 0.4
+    final_weights:
+      profit: 0.6
+      quality: 0.4
+
+download:
+  symbol: "BTCUSDT"     # Simbolo da scaricare
+  interval: "1m"         # Intervallo (1m, 5m, 15m, 1h, 4h, 1d)
+  start_date: "2024-11-25"  # Data di inizio
+  end_date: null         # Data di fine (null per scaricare fino ad ora)
+  batch_size: 1000       # Dimensione del batch per richiesta
+  output_folder: "data"  # Cartella dove salvare i dati
+  api:
+    key: ""             # API key Binance (opzionale)
+    secret: ""          # API secret Binance (opzionale)

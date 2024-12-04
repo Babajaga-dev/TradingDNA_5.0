@@ -3,6 +3,7 @@ from pathlib import Path
 from src.utils.data_loader import load_and_prepare_data
 from src.optimization.genetic import run_genetic_trading_system
 from src.models.simulator import TimeFrame
+from src.utils.config import config
 import matplotlib.pyplot as plt
 
 def plot_optimization_results(optimizer):
@@ -30,7 +31,9 @@ def ensure_data_directory():
     data_dir = project_root / 'data'
     data_dir.mkdir(exist_ok=True)
     
-    return data_dir / 'market_data.csv'
+    # Get data file name from config
+    data_file = config.get("simulator.data_file", "market_data_BTC.csv")
+    return data_dir / data_file
 
 def main():
     # Get data file path
@@ -53,23 +56,17 @@ def main():
         print(f"Error loading data: {str(e)}")
         return
     
-    # Parametri dell'ottimizzazione
-    params = {
-        'population_size': 100,
-        'generations': 50,
-        'initial_capital': 10000
-    }
+    # Stampa parametri dalla configurazione
+    print("\nParametri di configurazione:")
+    print(f"Popolazione: {config.get('genetic.population_size')}")
+    print(f"Generazioni: {config.get('genetic.generations')}")
+    print(f"Capitale iniziale: ${config.get('simulator.initial_capital')}")
     
     # Esegui l'ottimizzazione
     print("\nAvvio ottimizzazione genetica...")
-    print(f"Popolazione: {params['population_size']}")
-    print(f"Generazioni: {params['generations']}")
-    print(f"Capitale iniziale: ${params['initial_capital']}")
-    
     best_gene, optimizer = run_genetic_trading_system(
         market_data=data_dict['1m'],
-        timeframe=TimeFrame.M1,
-        **params
+        timeframe=TimeFrame.M1
     )
     
     # Stampa risultati
