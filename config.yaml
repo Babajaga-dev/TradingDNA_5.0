@@ -7,9 +7,9 @@ simulator:
 
 trading:
   position:
-    size_pct: 5 #5.0        # Percentuale del capitale per posizione (1-20%)
-    stop_loss_pct: 3.0 #2.0   # Percentuale stop loss (0.5-5%)
-    take_profit_pct: 6.0 #4.0 # Percentuale take profit (1-10%)
+    size_pct: 5          # Percentuale del capitale per posizione (1-20%)
+    stop_loss_pct: 2.0   # Percentuale stop loss (0.5-5%)
+    take_profit_pct: 4.0 # Percentuale take profit (1-10%)
   
   indicators:
     entry:
@@ -33,6 +33,79 @@ trading:
         params: {}
       operator: ">"
 
+  # Nuovi parametri per i geni specializzati
+  volatility_gene:
+    enabled: true
+    parameters:
+      timeperiod:
+        min: 10
+        max: 50
+        default: 14
+      multiplier:
+        min: 0.5
+        max: 2.0
+        default: 1.0
+      base_position_size:
+        min: 1.0
+        max: 10.0
+        default: 5.0
+      atr_limits:
+        min_size: 1.0
+        max_size: 20.0
+
+  momentum_gene:
+    enabled: true
+    parameters:
+      momentum_threshold:
+        min: 60
+        max: 80
+        default: 70
+      trend_strength:
+        min: 20
+        max: 30
+        default: 25
+      overbought_level:
+        min: 75
+        max: 85
+        default: 80
+      oversold_level:
+        min: 15
+        max: 25
+        default: 20
+      rsi:
+        timeperiod: 14
+      stochastic:
+        fastk_period: 14
+        slowk_period: 3
+        slowd_period: 3
+      adx:
+        timeperiod: 14
+
+  pattern_gene:
+    enabled: true
+    parameters:
+      required_patterns:
+        min: 1
+        max: 3
+        default: 2
+      pattern_window:
+        min: 2
+        max: 5
+        default: 3
+      confirmation_periods:
+        min: 1
+        max: 3
+        default: 1
+    patterns:
+      - ENGULFING     # CDLENGULFING
+      - HAMMER        # CDLHAMMER
+      - DOJI          # CDLDOJI
+      - EVENINGSTAR   # CDLEVENINGSTAR
+      - MORNINGSTAR   # CDLMORNINGSTAR
+      - HARAMI        # CDLHARAMI
+      - SHOOTINGSTAR  # CDLSHOOTINGSTAR
+      - MARUBOZU      # CDLMARUBOZU
+
 genetic:
   population_size: 100    # Dimensione della popolazione
   generations: 50         # Numero di generazioni
@@ -40,8 +113,22 @@ genetic:
   elite_size: 10         # Numero di migliori individui da preservare
   tournament_size: 5      # Dimensione del torneo per la selezione
   min_trades: 10         # Numero minimo di trade per considerare valido un gene
-  parallel_processes: 10   # Numero di processi da utilizzare in parallelo (0 = auto)
-  batch_size: 10         # Dimensione del batch per la valutazione parallela
+  parallel_processes: 10  # Numero di processi da utilizzare in parallelo (0 = auto)
+  batch_size: 32 #10         # Dimensione del batch per la valutazione parallela
+  
+  optimizer:
+    use_gpu: false          # Usa GPU se disponibile
+    torch_threads: -1      # -1 usa tutti i thread disponibili
+    batch_norm: true       # Usa batch normalization
+    precision: "float32"   # Può essere "float32" o "float16" per mixed precision
+
+
+  # Pesi per l'ensemble di geni
+  ensemble_weights:
+    base_gene: 0.4
+    volatility_gene: 0.2
+    momentum_gene: 0.2
+    pattern_gene: 0.2
 
   fitness_weights:
     profit_score:
@@ -57,11 +144,11 @@ genetic:
 
 download:
   symbol: "BTCUSDT"     # Simbolo da scaricare
-  interval: "1m"         # Intervallo (1m, 5m, 15m, 1h, 4h, 1d)
+  interval: "1m"        # Intervallo (1m, 5m, 15m, 1h, 4h, 1d)
   start_date: "2024-11-25"  # Data di inizio
-  end_date: null         # Data di fine (null per scaricare fino ad ora)
-  batch_size: 1000       # Dimensione del batch per richiesta
-  output_folder: "data"  # Cartella dove salvare i dati
+  end_date: null        # Data di fine (null per scaricare fino ad ora)
+  batch_size: 1000      # Dimensione del batch per richiesta
+  output_folder: "data" # Cartella dove salvare i dati
   api:
-    key: ""             # API key Binance (opzionale)
-    secret: ""          # API secret Binance (opzionale)
+    key: ""            # API key Binance (opzionale)
+    secret: ""         # API secret Binance (opzionale)
