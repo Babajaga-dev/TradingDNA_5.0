@@ -197,7 +197,7 @@ class ParallelGeneticOptimizer:
                 batch_results = list(pool.imap_unordered(self.evaluate_gene_parallel, current_batch))
                 results.extend(batch_results)
             
-            time.sleep(0.1)
+           # time.sleep(0.1)
         
         sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
         
