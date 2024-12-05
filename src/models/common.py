@@ -1,3 +1,4 @@
+# src/models/common.py
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
@@ -25,7 +26,7 @@ class MarketData:
     close: float
     volume: float
     timeframe: TimeFrame
-
+    
 @dataclass
 class Signal:
     type: SignalType
@@ -34,3 +35,24 @@ class Signal:
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     metadata: Dict = None
+
+@dataclass
+class Position:
+    entry_price: float
+    entry_time: datetime
+    size: float
+    signal: Signal
+    status: str = "OPEN"
+    exit_price: Optional[float] = None
+    exit_time: Optional[datetime] = None
+    pnl: float = 0.0
+
+    def close(self, exit_price: float, exit_time: datetime):
+        self.exit_price = exit_price
+        self.exit_time = exit_time
+        self.status = "CLOSED"
+        
+        if self.signal.type == SignalType.LONG:
+            self.pnl = (self.exit_price - self.entry_price) * self.size
+        else:
+            self.pnl = (self.entry_price - self.exit_price) * self.size
