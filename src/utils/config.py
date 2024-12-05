@@ -1,3 +1,4 @@
+# src/utils/config.py
 import yaml
 from typing import Dict, Any
 from pathlib import Path
@@ -16,18 +17,13 @@ class Config:
             self.load_config()
 
     def load_config(self, config_path: str = "config.yaml"):
-        """Carica la configurazione dal file YAML"""
         try:
             with open(config_path, 'r') as f:
                 self._config = yaml.safe_load(f)
         except Exception as e:
-            raise Exception(f"Errore nel caricamento del file di configurazione: {str(e)}")
+            raise Exception(f"Errore nel caricamento della configurazione: {str(e)}")
 
     def get(self, path: str, default: Any = None) -> Any:
-        """
-        Ottiene un valore dalla configurazione usando un path con dot notation
-        Esempio: config.get("simulator.initial_capital")
-        """
         try:
             value = self._config
             for key in path.split('.'):
@@ -37,8 +33,7 @@ class Config:
             return default
 
     def get_all(self) -> Dict:
-        """Restituisce l'intera configurazione"""
         return self._config
 
-# Singleton instance
+# Istanza singleton
 config = Config()
