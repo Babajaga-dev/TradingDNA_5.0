@@ -12,9 +12,18 @@ class Operator(Enum):
     CROSS_ABOVE = "cross_above"
     CROSS_BELOW = "cross_below"
 
+def calculate_bb_upper(x, timeperiod):
+    return talib.BBANDS(x, timeperiod=timeperiod)[0]
+
+def calculate_bb_lower(x, timeperiod):
+    return talib.BBANDS(x, timeperiod=timeperiod)[2]
+
+def calculate_close(x):
+    return x
+
+
 class TradingGene:
-
-
+ 
     def __init__(self, random_init=True):
         """Inizializza un nuovo gene"""
         self.available_indicators = {
@@ -22,9 +31,9 @@ class TradingGene:
             "EMA": {"func": talib.EMA, "params": ["timeperiod"]},
             "RSI": {"func": talib.RSI, "params": ["timeperiod"]},
             "MACD": {"func": talib.MACD, "params": ["fastperiod", "slowperiod", "signalperiod"]},
-            "BB_UPPER": {"func": lambda x, timeperiod: talib.BBANDS(x, timeperiod)[0], "params": ["timeperiod"]},
-            "BB_LOWER": {"func": lambda x, timeperiod: talib.BBANDS(x, timeperiod)[2], "params": ["timeperiod"]},
-            "CLOSE": {"func": lambda x: x, "params": []}
+            "BB_UPPER": {"func": calculate_bb_upper, "params": ["timeperiod"]},
+            "BB_LOWER": {"func": calculate_bb_lower, "params": ["timeperiod"]},
+            "CLOSE": {"func": calculate_close, "params": []}
         }
 
         self.fitness_score = None
@@ -82,7 +91,6 @@ class TradingGene:
                 "position_size_pct": config.get("trading.position.size_pct", 5.0)
             }
 
-
     def initialize_random(self):
         """Inizializza il gene con valori casuali"""
         self.dna = {
@@ -113,7 +121,6 @@ class TradingGene:
             "take_profit_pct": np.random.uniform(1.0, 10.0),
             "position_size_pct": np.random.uniform(1.0, 20.0)
         }
- 
  
     def _generate_random_params(self, param_names):
         """Genera parametri casuali per un indicatore"""
@@ -351,6 +358,45 @@ class TradingGene:
             ))
             
         return signals
+
+    def validate_dna(self):
+        """Valida il DNA del gene e sistema eventuali valori non validi"""
+        # Valida gli indicatori
+        for key in ['entry_indicator1', 'entry_indicator2', 'exit_indicator1', 'exit_indicator2']:
+            if self.dna[key] not in self.available_indicators:
+                self.dna[key] = np.random.choice(list(self.available_indicators.keys()))
+                self.dna[f'{key}_params'] = self._generate_random_params(
+                    self.available_indicators[self.dna[key]]["params"]
+                )
+        
+        # Valida i parametri degli indicatori
+        for key in ['entry_indicator1_params', 'entry_indicator2_params', 
+                   'exit_indicator1_params', 'exit_indicator2_params']:
+            base_key = key.replace('_params', '')
+            indicator = self.dna[base_key]
+            required_params = self.available_indicators[indicator]["params"]
+            
+            # Se mancano parametri richiesti, genera nuovi parametri
+            if not all(param in self.dna[key] for param in required_params):
+                self.dna[key] = self._generate_random_params(required_params)
+            
+            # Rimuovi parametri non necessari
+            self.dna[key] = {k: v for k, v in self.dna[key].items() if k in required_params}
+        
+        # Valida gli operatori
+        if not isinstance(self.dna['entry_operator'], Operator):
+            self.dna['entry_operator'] = np.random.choice(list(Operator))
+        if not isinstance(self.dna['exit_operator'], Operator):
+            self.dna['exit_operator'] = np.random.choice(list(Operator))
+        
+        # Valida e correggi i parametri di risk management
+        self.dna['stop_loss_pct'] = np.clip(self.dna['stop_loss_pct'], 0.5, 5.0)
+        self.dna['take_profit_pct'] = np.clip(self.dna['take_profit_pct'], 1.0, 10.0)
+        self.dna['position_size_pct'] = np.clip(self.dna['position_size_pct'], 1.0, 20.0)
+        
+        # Assicura che il take profit sia maggiore dello stop loss
+        if self.dna['take_profit_pct'] <= self.dna['stop_loss_pct']:
+            self.dna['take_profit_pct'] = self.dna['stop_loss_pct'] * 2
 
     def crossover(self, other: 'TradingGene') -> 'TradingGene':
         """Esegue il crossover con un altro gene"""
