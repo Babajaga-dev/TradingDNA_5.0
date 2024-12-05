@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import pandas as pd
 from src.optimization.genetic_parallel import run_parallel_genetic_trading_system
 from src.utils.data_loader import load_and_prepare_data
 from src.optimization.genetic import run_genetic_trading_system
@@ -55,6 +56,11 @@ def main():
         data_dict = load_and_prepare_data(str(data_file))
     except Exception as e:
         print(f"Error loading data: {str(e)}")
+        return
+    
+    # Verifica che data_dict['1m'] sia un DataFrame
+    if not isinstance(data_dict['1m'], pd.DataFrame):
+        print("Error: data_dict['1m'] is not a DataFrame")
         return
     
     # Stampa parametri dalla configurazione

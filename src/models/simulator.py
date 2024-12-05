@@ -25,9 +25,6 @@ class Position:
             self.pnl = (self.entry_price - self.exit_price) * self.size
         self.status = "CLOSED"
 
-
-
-
 class TradingSimulator:
 
 
@@ -271,7 +268,7 @@ class TradingSimulator:
             "total_trades": total_trades,
             "winning_trades": winning_trades,
             "win_rate": winning_trades / total_trades if total_trades > 0 else 0,
-            "total_pnl": total_pnl / 10,  # Dividiamo anche qui il P&L totale per 10
+            "total_pnl": total_pnl, 
             "final_capital": self.capital,
             "max_drawdown": max_drawdown,
             "sharpe_ratio": sharpe
