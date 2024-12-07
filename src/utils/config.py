@@ -1,7 +1,10 @@
-# src/utils/config.py
 import yaml
+import logging
 from typing import Dict, Any
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Config:
     _instance = None
@@ -18,10 +21,20 @@ class Config:
 
     def load_config(self, config_path: str = "config.yaml"):
         try:
+            config_file = Path(config_path)
+            if not config_file.exists():
+                raise FileNotFoundError(f"File di configurazione non trovato: {config_path}")
+                
+            logger.info(f"Caricamento configurazione da {config_path}")
             with open(config_path, 'r') as f:
                 self._config = yaml.safe_load(f)
+                
+            logger.info("Configurazione caricata con successo")
+            logger.debug(f"Configurazione completa: {self._config}")
+                
         except Exception as e:
-            raise Exception(f"Errore nel caricamento della configurazione: {str(e)}")
+            logger.error(f"Errore nel caricamento della configurazione: {str(e)}")
+            raise
 
     def get(self, path: str, default: Any = None) -> Any:
         try:
@@ -30,6 +43,7 @@ class Config:
                 value = value[key]
             return value
         except (KeyError, TypeError):
+            logger.warning(f"Chiave {path} non trovata, uso valore default: {default}")
             return default
 
     def get_all(self) -> Dict:

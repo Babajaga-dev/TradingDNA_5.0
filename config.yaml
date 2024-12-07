@@ -107,14 +107,14 @@ trading:
       - MARUBOZU      # CDLMARUBOZU
 
 genetic:
-  population_size: 100    # Dimensione della popolazione
-  generations: 50         # Numero di generazioni
-  mutation_rate: 0.1      # Tasso di mutazione (0-1)
-  elite_size: 10         # Numero di migliori individui da preservare
-  tournament_size: 5      # Dimensione del torneo per la selezione
-  min_trades: 10         # Numero minimo di trade per considerare valido un gene
-  parallel_processes: 10  # Numero di processi da utilizzare in parallelo (0 = auto)
-  batch_size: 32 #10         # Dimensione del batch per la valutazione parallela
+  population_size: 200    # Aumentato
+  generations: 100        # Aumentato
+  mutation_rate: 0.15     # Aumentato per esplorazione
+  elite_size: 20         # Aumentato proporzionalmente
+  tournament_size: 8      # Aumentato selezione
+  min_trades: 30         # Aumentato robustezza
+  parallel_processes: 10  # Aumentato parallelizzazione
+  batch_size: 32         # Ottimizzato performance
   
   optimizer:
     use_gpu: false          # Usa GPU se disponibile
