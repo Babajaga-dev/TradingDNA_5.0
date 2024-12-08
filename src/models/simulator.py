@@ -29,6 +29,7 @@ class TradingSimulator:
         self.market_state = None
         self.positions = []
         self.equity_curve = []
+        self.metrics = None
 
     def add_market_data(self, timeframe: TimeFrame, data: pd.DataFrame):
         """Converte dati in arrays numpy per processamento veloce"""
@@ -57,56 +58,113 @@ class TradingSimulator:
             self.indicators_cache[f"RSI_{period}"] = talib.RSI(
                 self.market_state.close, timeperiod=period
             )
-        
-        for timeperiod in [20, 50]:
+            
             upper, middle, lower = talib.BBANDS(
-                self.market_state.close, timeperiod=timeperiod
+                self.market_state.close, timeperiod=period
             )
-            self.indicators_cache[f"BB_UPPER_{timeperiod}"] = upper
-            self.indicators_cache[f"BB_MIDDLE_{timeperiod}"] = middle
-            self.indicators_cache[f"BB_LOWER_{timeperiod}"] = lower
+            self.indicators_cache[f"BB_UPPER_{period}"] = upper
+            self.indicators_cache[f"BB_MIDDLE_{period}"] = middle
+            self.indicators_cache[f"BB_LOWER_{period}"] = lower
 
     def run_simulation_vectorized(self, entry_conditions: np.ndarray) -> Dict:
+        """Esegue simulazione vettorizzata e salva metriche"""
         self._reset_simulation()
         
-        actions = np.zeros(len(self.market_state.close))
-        actions[entry_conditions] = 1  # Segnali di entrata
+        position_size_pct = config.get("trading.position.size_pct", 5) / 100
+        stop_loss_pct = config.get("trading.position.stop_loss_pct", 2) / 100
+        take_profit_pct = config.get("trading.position.take_profit_pct", 4) / 100
         
-        # Aggiungi segnali di uscita dopo ogni entrata
-        for i in range(1, len(actions)):
-            if actions[i-1] == 1:
-                actions[i] = -1
+        prices = self.market_state.close
+        position_active = np.zeros_like(prices, dtype=bool)
+        entry_prices = np.zeros_like(prices)
+        pnl = np.zeros_like(prices)
+        equity = np.ones_like(prices) * self.initial_capital
+        trade_results = []
         
-        position_sizes = np.zeros_like(self.market_state.close)
-        equity = np.zeros_like(self.market_state.close)
-        equity[0] = self.initial_capital
-        
-        position_active = False
-        entry_price = 0
-        
-        for i in range(1, len(actions)):
-            if actions[i] == 1 and not position_active:
-                position_active = True
-                entry_price = self.market_state.close[i]
-                position_sizes[i] = (equity[i-1] * 0.05) / entry_price
-                equity[i] = equity[i-1]
+        for i in range(1, len(prices)):
+            current_price = prices[i]
             
-            elif actions[i] == -1 and position_active:
-                position_active = False
-                pnl = position_sizes[i-1] * (self.market_state.close[i] - entry_price)
-                equity[i] = equity[i-1] + pnl
-                position_sizes[i] = 0
+            if entry_conditions[i] and not position_active[i-1]:
+                # Entry
+                position_active[i:] = True
+                entry_prices[i:] = current_price
+                
+            elif position_active[i-1]:
+                # Check exit conditions
+                entry_price = entry_prices[i-1]
+                price_change = (current_price - entry_price) / entry_price
+                
+                should_exit = (
+                    price_change <= -stop_loss_pct or  # Stop loss
+                    price_change >= take_profit_pct or  # Take profit
+                    entry_conditions[i]  # New signal
+                )
+                
+                if should_exit:
+                    position_active[i:] = False
+                    pnl[i] = price_change * position_size_pct * equity[i-1]
+                    trade_results.append(pnl[i])
+                    
+            # Update equity
+            equity[i] = equity[i-1] + pnl[i]
+        
+        # Calculate metrics
+        total_trades = len(trade_results)
+        if total_trades == 0:
+            self.metrics = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "win_rate": 0,
+                "total_pnl": 0,
+                "final_capital": self.initial_capital,
+                "max_drawdown": 0,
+                "sharpe_ratio": 0,
+                "profit_factor": 0
+            }
+        else:
+            winning_trades = sum(1 for x in trade_results if x > 0)
             
+            # Drawdown calculation
+            peaks = np.maximum.accumulate(equity)
+            drawdowns = (peaks - equity) / peaks
+            max_drawdown = np.max(drawdowns)
+            
+            # Returns and Sharpe calculation
+            returns = np.diff(equity) / equity[:-1]
+            returns = returns[~np.isnan(returns) & ~np.isinf(returns)]
+            
+            if len(returns) > 0 and np.std(returns) > 0:
+                sharpe = np.sqrt(252) * (np.mean(returns) / np.std(returns))
             else:
-                position_sizes[i] = position_sizes[i-1]
-                if position_active:
-                    unrealized_pnl = position_sizes[i] * (self.market_state.close[i] - entry_price)
-                    equity[i] = equity[i-1] + (unrealized_pnl - unrealized_pnl)
-                else:
-                    equity[i] = equity[i-1]
+                sharpe = 0
+                
+            # Profit Factor
+            gross_profits = sum(x for x in trade_results if x > 0)
+            gross_losses = abs(sum(x for x in trade_results if x < 0))
+            profit_factor = gross_profits / gross_losses if gross_losses != 0 else 0
+            
+            self.metrics = {
+                "total_trades": total_trades,
+                "winning_trades": winning_trades,
+                "win_rate": winning_trades / total_trades,
+                "total_pnl": float(equity[-1] - self.initial_capital),
+                "final_capital": float(equity[-1]),
+                "max_drawdown": float(max_drawdown),
+                "sharpe_ratio": float(sharpe),
+                "profit_factor": float(profit_factor)
+            }
+            
+        return self.metrics
 
-        trades = np.sum(np.diff(position_sizes != 0)) // 2
-        if trades == 0:
+    def _reset_simulation(self):
+        """Reset simulation state"""
+        self.positions = []
+        self.equity_curve = []
+        self.metrics = None
+
+    def get_performance_metrics(self) -> Dict:
+        """Returns current performance metrics"""
+        if self.metrics is None:
             return {
                 "total_trades": 0,
                 "winning_trades": 0,
@@ -114,37 +172,7 @@ class TradingSimulator:
                 "total_pnl": 0,
                 "final_capital": self.initial_capital,
                 "max_drawdown": 0,
-                "sharpe_ratio": 0
+                "sharpe_ratio": 0,
+                "profit_factor": 0
             }
-
-        trade_pnls = np.diff(equity)[np.diff(position_sizes != 0) != 0]
-        winning_trades = np.sum(trade_pnls > 0)
-        
-        peaks = np.maximum.accumulate(equity)
-        drawdowns = (peaks - equity) / peaks
-        max_drawdown = np.max(drawdowns)
-        
-        returns = np.diff(equity) / equity[:-1]
-        returns = returns[~np.isnan(returns)]
-        returns = returns[~np.isinf(returns)]
-        
-        sharpe = np.sqrt(252) * (np.mean(returns) / np.std(returns)) if len(returns) > 0 and np.std(returns) > 0 else 0.0
-
-        return {
-            "total_trades": int(trades),
-            "winning_trades": int(winning_trades),
-            "win_rate": winning_trades / trades if trades > 0 else 0,
-            "total_pnl": float(equity[-1] - self.initial_capital),
-            "final_capital": float(equity[-1]),
-            "max_drawdown": float(max_drawdown),
-            "sharpe_ratio": float(sharpe)
-        }
-
-
-
-
-
-    def _reset_simulation(self):
-        """Reset simulation state"""
-        self.positions = []
-        self.equity_curve = []
+        return self.metrics
