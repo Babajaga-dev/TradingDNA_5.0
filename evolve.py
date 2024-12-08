@@ -1,3 +1,4 @@
+# src/optimization/evolve.py
 import pickle
 import numpy as np
 import pandas as pd
@@ -153,7 +154,7 @@ def generate_evolution_report(evolution_state: Dict, report_dir: Path) -> str:
         
         # Metriche di convergenza
         report.append("\nMETRICHE DI CONVERGENZA:")
-        report.append(f"Fitness finale migliore: {history_analysis['convergence']['final_best_fitness']:.4f}")
+        report.append(f"Fitness finale migliore: {history_analysis['convergence']['final_best_fitness']:.4f}")             
         report.append(f"Fitness media finale: {history_analysis['convergence']['final_avg_fitness']:.4f}")
         report.append(f"Tasso di miglioramento per generazione: {history_analysis['convergence']['improvement_rate']:.6f}")
         report.append(f"Generazione di convergenza: {history_analysis['convergence']['convergence_gen']}")
@@ -182,11 +183,14 @@ def generate_evolution_report(evolution_state: Dict, report_dir: Path) -> str:
         
         # Metriche di performance del miglior gene
         report.append("\nPERFORMANCE DEL MIGLIOR GENE:")
-        report.append(f"Total trades: {evolution_state['stats'].get('total_trades', 'N/A')}")
-        report.append(f"Win rate: {evolution_state['stats'].get('win_rate', 0):.2%}")
-        report.append(f"Profit factor: {evolution_state['stats'].get('profit_factor', 0):.2f}")
-        report.append(f"Sharpe ratio: {evolution_state['stats'].get('sharpe_ratio', 0):.2f}")
-        report.append(f"Max drawdown: {evolution_state['stats'].get('max_drawdown', 0):.2%}")
+        stats = evolution_state['stats']
+        report.append(f"Total trades: {stats['total_trades']}")
+        report.append(f"Win rate: {stats['win_rate']:.2%}")
+        report.append(f"Profit factor: {stats['profit_factor']:.2f}")
+        report.append(f"Sharpe ratio: {stats['sharpe_ratio']:.2f}")
+        report.append(f"Max drawdown: {stats['max_drawdown']:.2%}")
+        report.append(f"Total PnL: ${stats['total_pnl']:.2f}")
+        report.append(f"Final capital: ${stats['final_capital']:.2f}")
         
         report_content = '\n'.join(report)
         
@@ -279,6 +283,11 @@ def run_evolution(data_file: str,
         best_gene, stats = optimizer.optimize(simulator)
         logger.info("Optimization completed")
         
+        # Fai una simulazione finale con il miglior gene
+        final_metrics = simulator.run_simulation_vectorized(
+            best_gene.generate_entry_conditions(optimizer.precalculated_data)
+        )
+        
         # Timestamp per i file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
@@ -286,7 +295,7 @@ def run_evolution(data_file: str,
         evolution_state = {
             'timestamp': datetime.now(),
             'best_gene': best_gene,
-            'stats': stats,
+            'stats': final_metrics,  # Usa le metriche finali qui
             'config': config.get_all(),
             'generation_stats': optimizer.generation_stats,
             'data_info': {

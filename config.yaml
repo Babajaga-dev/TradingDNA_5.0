@@ -7,9 +7,9 @@ simulator:
 
 trading:
   position:
-    size_pct: 5          # Percentuale del capitale per posizione (1-20%)
-    stop_loss_pct: 2.0   # Percentuale stop loss (0.5-5%)
-    take_profit_pct: 4.0 # Percentuale take profit (1-10%)
+    size_pct: 5          # Percentuale del capitale per posizione
+    stop_loss_pct: 2.0   # Percentuale stop loss
+    take_profit_pct: 4.0 # Percentuale take profit
   
   indicators:
     entry:
@@ -33,7 +33,7 @@ trading:
         params: {}
       operator: ">"
 
-  # Nuovi parametri per i geni specializzati
+  # Parametri per i geni specializzati
   volatility_gene:
     enabled: true
     parameters:
@@ -97,31 +97,30 @@ trading:
         max: 3
         default: 1
     patterns:
-      - ENGULFING     # CDLENGULFING
-      - HAMMER        # CDLHAMMER
-      - DOJI          # CDLDOJI
-      - EVENINGSTAR   # CDLEVENINGSTAR
-      - MORNINGSTAR   # CDLMORNINGSTAR
-      - HARAMI        # CDLHARAMI
-      - SHOOTINGSTAR  # CDLSHOOTINGSTAR
-      - MARUBOZU      # CDLMARUBOZU
+      - ENGULFING
+      - HAMMER
+      - DOJI
+      - EVENINGSTAR
+      - MORNINGSTAR
+      - HARAMI
+      - SHOOTINGSTAR
+      - MARUBOZU
 
 genetic:
-  population_size: 200    # Aumentato
-  generations: 100        # Aumentato
-  mutation_rate: 0.15     # Aumentato per esplorazione
-  elite_size: 20         # Aumentato proporzionalmente
-  tournament_size: 8      # Aumentato selezione
-  min_trades: 30         # Aumentato robustezza
-  parallel_processes: 10  # Aumentato parallelizzazione
-  batch_size: 32         # Ottimizzato performance
+  population_size: 300     # Aumentato
+  generations: 100         # Aumentato
+  mutation_rate: 0.2      # Aumentato per maggiore esplorazione
+  elite_size: 5           # Ridotto
+  tournament_size: 5      # Ridotto per minore pressione selettiva
+  min_trades: 50          # Aumentato per maggiore robustezza
+  parallel_processes: 10  # Parallelizzazione
+  batch_size: 32         # Dimensione batch
   
   optimizer:
-    use_gpu: false          # Usa GPU se disponibile
-    torch_threads: -1      # -1 usa tutti i thread disponibili
-    batch_norm: true       # Usa batch normalization
-    precision: "float32"   # Può essere "float32" o "float16" per mixed precision
-
+    use_gpu: false       # Usa GPU se disponibile
+    torch_threads: -1    # -1 usa tutti i thread disponibili
+    batch_norm: true     # Usa batch normalization
+    precision: "float32" # Può essere "float32" o "float16"
 
   # Pesi per l'ensemble di geni
   ensemble_weights:
@@ -143,12 +142,12 @@ genetic:
       quality: 0.4
 
 download:
-  symbol: "BTCUSDT"     # Simbolo da scaricare
-  interval: "1m"        # Intervallo (1m, 5m, 15m, 1h, 4h, 1d)
-  start_date: "2024-11-25"  # Data di inizio
-  end_date: null        # Data di fine (null per scaricare fino ad ora)
-  batch_size: 1000      # Dimensione del batch per richiesta
-  output_folder: "data" # Cartella dove salvare i dati
+  symbol: "BTCUSDT"
+  interval: "1m"
+  start_date: "2024-11-25"
+  end_date: null
+  batch_size: 1000
+  output_folder: "data"
   api:
-    key: ""            # API key Binance (opzionale)
-    secret: ""         # API secret Binance (opzionale)
+    key: ""
+    secret: ""
