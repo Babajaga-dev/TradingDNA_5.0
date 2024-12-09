@@ -1,0 +1,46 @@
+
+REPORT DETTAGLIATO EVOLUZIONE
+==================================================
+
+INFORMAZIONE GENERALI:
+Data esecuzione: 2024-12-09 02:38:38.087391
+File dati: market_data_BTC_1m.csv
+Periodo: 2024-11-24 23:00:00 - 2024-12-04 17:50:00
+
+METRICHE DI CONVERGENZA:
+Fitness finale migliore: 0.7019
+Fitness media finale: 0.4133
+Tasso di miglioramento per generazione: 0.000407
+Generazione di convergenza: 15
+
+ANALISI DELLA VARIABILITÀ:
+Deviazione standard fitness (ultime 10 gen): 0.0000
+Diversità media popolazione (ultime 10 gen): 0.1952
+
+ANALISI DELLE TENDENZE:
+Pendenza della fitness: 0.000206
+R² della fitness: 0.2539
+P-value della tendenza: 0.0500
+
+ANALISI DEI PLATEAU:
+Numero di plateau: 2
+Lunghezza media plateau: 74.00
+Lunghezza massima plateau: 135
+
+PARAMETRI DEL MIGLIOR GENE:
+entry_indicator1: BB_LOWER
+entry_indicator1_params: {'timeperiod': 50}
+entry_indicator2: EMA
+entry_indicator2_params: {'timeperiod': 100}
+entry_operator: >
+stop_loss_pct: 1.944234173026633
+take_profit_pct: 2.8171299779440044
+
+PERFORMANCE DEL MIGLIOR GENE:
+Total trades: 78
+Win rate: 64.10%
+Profit factor: 5.64
+Sharpe ratio: 0.32
+Max drawdown: 0.02%
+Total PnL: $31.95
+Final capital: $10031.95
