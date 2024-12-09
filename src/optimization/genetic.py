@@ -1,3 +1,8 @@
+import psutil
+import gc
+import os
+import time
+
 import multiprocessing
 import logging
 import traceback
@@ -19,27 +24,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ParallelGeneticOptimizer:
+    
+
     def __init__(self):
         # Parametri base
-        self.population_size = config.get("genetic.population_size", 600)
-        self.generations = config.get("genetic.generations", 200)
-        self.mutation_rate = config.get("genetic.mutation_rate", 0.35)
-        self.elite_size = config.get("genetic.elite_size", 2)
-        self.tournament_size = config.get("genetic.tournament_size", 2)
+        self.population_size = config.get("genetic.population_size", 280)
+        self.generations = config.get("genetic.generations", 150)
+        self.mutation_rate = config.get("genetic.mutation_rate", 0.45)
+        self.elite_size = config.get("genetic.elite_size", 5)
+        self.tournament_size = config.get("genetic.tournament_size", 5)
         self.min_trades = config.get("genetic.min_trades", 50)
         self.num_processes = min(
-            config.get("genetic.parallel_processes", 10),
+            config.get("genetic.parallel_processes", 5),
             multiprocessing.cpu_count()
         )
-        self.batch_size = config.get("genetic.batch_size", 32)
+        self.batch_size = config.get("genetic.batch_size", 16)
         
-        # Nuovi parametri per restart e anti-convergenza
+        # Parametri anti-plateau e adattivi
         self.mutation_decay = config.get("genetic.mutation_decay", 0.995)
-        self.diversity_threshold = config.get("genetic.diversity_threshold", 0.15)
-        self.restart_threshold = config.get("genetic.restart_threshold", 20)
-        self.improvement_threshold = config.get("genetic.improvement_threshold", 0.001)
-        self.restart_elite_fraction = config.get("genetic.restart_elite_fraction", 0.1)
-        self.restart_mutation_multiplier = config.get("genetic.restart_mutation_multiplier", 2.0)
+        self.diversity_threshold = config.get("genetic.diversity_threshold", 0.25)
+        self.restart_threshold = config.get("genetic.restart_threshold", 8)
+        self.improvement_threshold = config.get("genetic.improvement_threshold", 0.002)
+        self.restart_elite_fraction = config.get("genetic.restart_elite_fraction", 0.12)
+        self.restart_mutation_multiplier = config.get("genetic.restart_mutation_multiplier", 2.2)
         
         # Stati
         self.generation_stats = []
@@ -257,7 +264,7 @@ class ParallelGeneticOptimizer:
         return new_gene
 
     def _calculate_diversity(self) -> float:
-        """Calcola la diversità della popolazione"""
+        """Calcola la diversità della popolazione con peso basato sul fitness"""
         try:
             if not self.population:
                 return 0.0
@@ -265,107 +272,65 @@ class ParallelGeneticOptimizer:
             unique_signatures = set()
             total_genes = len(self.population)
             
+            # Normalizzazione dei fitness scores per il peso
+            fitness_scores = [gene.fitness_score or 0 for gene in self.population]
+            if fitness_scores:
+                min_fitness = min(fitness_scores)
+                max_fitness = max(fitness_scores)
+                fitness_range = max_fitness - min_fitness if max_fitness > min_fitness else 1
+            
+            weighted_signatures = []
             for gene in self.population:
-                # Normalizza i valori numerici per considerare piccole variazioni
                 signature = []
+                # Calcolo del peso normalizzato basato sul fitness
+                normalized_fitness = ((gene.fitness_score or 0) - min_fitness) / fitness_range if fitness_range > 0 else 0
+                fitness_weight = 1.0 + normalized_fitness  # Il peso minimo è 1.0
+                
+                # Generazione signature pesata
                 for key, value in sorted(gene.dna.items()):
                     if isinstance(value, dict):
-                        # Gestisci dizionari innestati
                         dict_items = []
                         for k, v in sorted(value.items()):
                             if isinstance(v, (int, float)):
-                                # Arrotonda i valori numerici per considerare simili quelli vicini
-                                v = round(v, 2)
-                            dict_items.append((k, v))
+                                # Applica il peso ai valori numerici
+                                weighted_v = v * fitness_weight
+                                # Discretizza i valori pesati per evitare troppa granularità
+                                discrete_v = round(weighted_v * 100) / 100
+                                dict_items.append((k, discrete_v))
+                            else:
+                                dict_items.append((k, v))
                         signature.append((key, tuple(dict_items)))
                     elif isinstance(value, (int, float)):
-                        # Arrotonda i valori numerici
-                        signature.append((key, round(value, 2)))
+                        # Applica il peso ai valori numerici diretti
+                        weighted_v = value * fitness_weight
+                        discrete_v = round(weighted_v * 100) / 100
+                        signature.append((key, discrete_v))
                     else:
                         signature.append((key, value))
                 
-                unique_signatures.add(tuple(signature))
+                weighted_signatures.append(tuple(signature))
             
-            diversity = len(unique_signatures) / total_genes
-            logger.debug(f"Population diversity: {diversity:.4f} ({len(unique_signatures)} unique in {total_genes} total)")
-            return diversity
+            # Calcola la diversità considerando le signature pesate
+            unique_signatures = set(weighted_signatures)
+            simple_diversity = len(unique_signatures) / total_genes
+            
+            # Aggiunge un bonus per i geni con performance superiore
+            performance_bonus = 0.0
+            if fitness_scores:
+                top_performers = len([s for s in fitness_scores if s > (max_fitness * 0.8)])
+                performance_bonus = min(0.1, (top_performers / total_genes) * 0.2)
+            
+            final_diversity = simple_diversity + performance_bonus
+            
+            logger.debug(f"Population diversity: {final_diversity:.4f} " \
+                        f"(base: {simple_diversity:.4f}, bonus: {performance_bonus:.4f})")
+            
+            return min(1.0, final_diversity)  # Assicura che il risultato sia <= 1.0
             
         except Exception as e:
             logger.error(f"Error calculating diversity: {str(e)}")
             logger.error(traceback.format_exc())
             return 0.0
-
-    def _selection_and_reproduction(self, 
-                                  population: List[TradingGene], 
-                                  fitness_scores: List[float]) -> List[TradingGene]:
-        """Esegue selezione e riproduzione con meccanismi anti-stagnazione"""
-        try:
-            # Normalizza i fitness scores
-            fitness_scores = np.array(fitness_scores)
-            fitness_scores = (fitness_scores - fitness_scores.min()) / (fitness_scores.max() - fitness_scores.min() + 1e-10)
-            
-            # Seleziona elite con controllo duplicati
-            elite_indices = np.argsort(fitness_scores)[-self.elite_size:]
-            new_population = []
-            elite_signatures = set()
-            
-            for idx in elite_indices:
-                gene = deepcopy(population[idx])
-                signature = self._get_gene_signature(gene)
-                if signature not in elite_signatures:
-                    elite_signatures.add(signature)
-                    new_population.append(gene)
-            
-            # Calcola probabilità di selezione con temperature scaling
-            temperature = 0.1  # Controlla la pressione selettiva
-            selection_probs = np.exp(fitness_scores / temperature)
-            selection_probs = selection_probs / selection_probs.sum()
-            
-            # Aggiorna mutation_rate con decay e floor
-            min_mutation_rate = 0.05  # Tasso minimo di mutazione
-            current_generation = len(self.generation_stats)
-            current_mutation_rate = max(
-                min_mutation_rate,
-                self.mutation_rate * (self.mutation_decay ** current_generation)
-            )
-            
-            # Reproduction loop
-            while len(new_population) < self.population_size:
-                if np.random.random() < 0.8:  # 80% crossover, 20% mutation
-                    # Seleziona genitori diversi
-                    parent1 = self._tournament_selection(population, selection_probs)
-                    parent2 = self._tournament_selection(population, selection_probs)
-                    while self._get_gene_signature(parent1) == self._get_gene_signature(parent2):
-                        parent2 = self._tournament_selection(population, selection_probs)
-                    
-                    # Crossover con mutation
-                    child = parent1.crossover(parent2)
-                    child.mutate(current_mutation_rate)
-                else:
-                    # Mutation forte
-                    parent = self._tournament_selection(population, selection_probs)
-                    child = deepcopy(parent)
-                    child.mutate(current_mutation_rate * 2)
-                
-                # Verifica unicità
-                child_signature = self._get_gene_signature(child)
-                if child_signature not in elite_signatures:
-                    new_population.append(child)
-                    elite_signatures.add(child_signature)
-            
-            # Aggiungi variazione casuale se necessario
-            if len(new_population) < self.population_size:
-                missing = self.population_size - len(new_population)
-                for _ in range(missing):
-                    new_gene = TradingGene(random_init=True)
-                    new_population.append(new_gene)
-            
-            return new_population
-            
-        except Exception as e:
-            logger.error(f"Error in selection and reproduction: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
             
     def _get_gene_signature(self, gene: TradingGene) -> tuple:
         """Genera una signature unica per un gene"""
@@ -389,94 +354,6 @@ class ParallelGeneticOptimizer:
         num_random = int(self.population_size * 0.2)  # 20% nuovi individui casuali
         population[-num_random:] = [TradingGene(random_init=True) 
                                   for _ in range(num_random)]
-
-    def optimize(self, simulator: TradingSimulator) -> Tuple[TradingGene, Dict]:
-        """Esegue l'ottimizzazione genetica con restart e anti-convergenza"""
-        try:
-            logger.info("Starting enhanced genetic optimization")
-            start_time = datetime.now()
-            
-            self.precalculated_data = self._precalculate_indicators(simulator.market_state)
-            self.population = self._initialize_population()
-            
-            generations_without_improvement = 0
-            best_overall_fitness = float('-inf')
-            
-            for generation in range(self.generations):
-                generation_start = datetime.now()
-                logger.info(f"Generation {generation + 1}/{self.generations}")
-                
-                # Valuta popolazione
-                fitness_scores, best_gen_fitness, best_gen_gene = self._evaluate_population(simulator)
-                
-                # Aggiorna migliori risultati
-                if best_gen_fitness > best_overall_fitness:
-                    best_overall_fitness = best_gen_fitness
-                    self.best_gene = deepcopy(best_gen_gene)
-                    generations_without_improvement = 0
-                else:
-                    generations_without_improvement += 1
-                
-                # Calcola statistiche
-                diversity = self._calculate_diversity()
-                gen_stats = {
-                    "generation": generation + 1,
-                    "best_fitness": best_gen_fitness,
-                    "avg_fitness": np.mean(fitness_scores),
-                    "std_fitness": np.std(fitness_scores),
-                    "diversity": diversity,
-                    "elapsed_time": (datetime.now() - generation_start).total_seconds()
-                }
-                self.generation_stats.append(gen_stats)
-                
-                # Log dei progressi
-                logger.info(f"Best Fitness: {gen_stats['best_fitness']:.4f}")
-                logger.info(f"Average Fitness: {gen_stats['avg_fitness']:.4f}")
-                logger.info(f"Population Diversity: {gen_stats['diversity']:.4f}")
-                logger.info(f"Time: {gen_stats['elapsed_time']:.2f}s")
-                
-                # Verifica necessità di restart
-                if self._check_for_restart():
-                    logger.info("Performing population restart...")
-                    self._perform_restart()
-                    generations_without_improvement = 0
-                
-                # Early stopping con controllo diversità
-                if generations_without_improvement >= self.restart_threshold and \
-                   diversity < self.diversity_threshold:
-                    logger.info("Early stopping - No improvement and low diversity")
-                    break
-                
-                # Crea prossima generazione
-                if generation < self.generations - 1:
-                    self.population = self._selection_and_reproduction(
-                        self.population, fitness_scores
-                    )
-            
-            # Statistiche finali
-            total_time = (datetime.now() - start_time).total_seconds()
-            final_stats = {
-                "best_fitness": best_overall_fitness,
-                "generations": len(self.generation_stats),
-                "total_time": total_time,
-                "avg_generation_time": total_time / len(self.generation_stats),
-                "early_stopped": generations_without_improvement >= self.restart_threshold,
-                "final_population_size": len(self.population),
-                "final_diversity": self._calculate_diversity()
-            }
-            
-            logger.info("\nOptimization completed!")
-            logger.info(f"Best fitness achieved: {best_overall_fitness:.4f}")
-            logger.info(f"Total generations: {final_stats['generations']}")
-            logger.info(f"Total time: {final_stats['total_time']:.2f}s")
-            
-            return self.best_gene, final_stats
-            
-        except Exception as e:
-            logger.error("Error in genetic optimization:")
-            logger.error(str(e))
-            logger.error(traceback.format_exc())
-            raise
 
     def _calculate_fitness(self, metrics: Dict) -> float:
         """Calcola il fitness score con nuovi pesi e metriche"""
@@ -535,8 +412,6 @@ class ParallelGeneticOptimizer:
             logger.error(f"Error calculating fitness: {str(e)}")
             logger.error(traceback.format_exc())
             return 0.0
-
-# Aggiorna questa parte nel file src/optimization/genetic.py
 
     def _precalculate_indicators(self, market_state: MarketState) -> Dict[str, np.ndarray]:
         """Precalcola indicatori tecnici comuni con periodi estesi"""
@@ -722,51 +597,141 @@ class ParallelGeneticOptimizer:
         return population
 
     def _evaluate_population(self, simulator: TradingSimulator) -> Tuple[List[float], float, TradingGene]:
-        """Valuta la popolazione corrente in parallelo"""
+        """Valuta la popolazione corrente in parallelo con gestione ottimizzata delle risorse"""
         try:
             fitness_scores = []
             best_generation_fitness = float('-inf')
             best_generation_gene = None
             
-            # Valutazione in batch paralleli
-            with multiprocessing.Pool(processes=self.num_processes) as pool:
-                for i in range(0, len(self.population), self.batch_size):
-                    batch = [(gene, simulator) for gene in 
-                            self.population[i:i + self.batch_size]]
-                    
-                    batch_results = pool.map_async(
-                        self._evaluate_gene_parallel, batch
-                    )
-                    
-                    for gene, fitness in batch_results.get():
-                        fitness_scores.append(fitness)
+            # Lettura configurazione memoria e processi
+            memory_reserve_gb = config.get("genetic.memory_reserve_gb", 2)  
+            memory_per_process_mb = config.get("genetic.memory_per_process_mb", 150)
+            memory_reserve = memory_reserve_gb * 1024 * 1024 * 1024  # Converti in bytes
+            memory_per_process = memory_per_process_mb * 1024 * 1024  # Converti in bytes
+            
+            # Calcolo memoria disponibile
+            total_memory = psutil.virtual_memory().total
+            available_memory = psutil.virtual_memory().available
+            usable_memory = max(0, available_memory - memory_reserve)
+            
+            # Log stato memoria
+            logger.info("Memory Status:")
+            logger.info(f"Total System Memory: {total_memory / (1024**3):.2f}GB")
+            logger.info(f"Available Memory: {available_memory / (1024**3):.2f}GB")
+            logger.info(f"Reserved Memory: {memory_reserve_gb}GB")
+            logger.info(f"Usable Memory: {usable_memory / (1024**3):.2f}GB")
+            
+            # Calcolo numero ottimale di processi
+            logical_cores = psutil.cpu_count(logical=True)
+            physical_cores = psutil.cpu_count(logical=False)
+            
+            max_processes = min(
+                logical_cores - 2,  # Lascia 2 core per il sistema
+                max(1, int(usable_memory / memory_per_process)),
+                len(self.population)  # Non più processi che individui
+            )
+            
+            # Override del numero di processi configurato
+            self.num_processes = max_processes
+            
+            # Calcolo batch size ottimale
+            optimal_batch_size = min(
+                32,  # Massimo batch size
+                max(1, len(self.population) // max_processes),  # Distribuzione sui processi
+                len(self.population)  # Non più grande della popolazione
+            )
+            
+            logger.info("\nParallel Processing Setup:")
+            logger.info(f"Physical Cores: {physical_cores}")
+            logger.info(f"Logical Cores: {logical_cores}")
+            logger.info(f"Active Processes: {max_processes}")
+            logger.info(f"Memory Per Process: {memory_per_process_mb}MB")
+            logger.info(f"Batch Size: {optimal_batch_size}")
+            
+            # Crea pool con il numero ottimale di processi
+            with multiprocessing.Pool(processes=max_processes) as pool:
+                try:
+                    # Processa la popolazione in batch
+                    for i in range(0, len(self.population), optimal_batch_size):
+                        # Controllo memoria prima di ogni batch
+                        current_memory = psutil.Process().memory_info().rss
+                        memory_usage_pct = current_memory / total_memory * 100
                         
-                        if fitness > best_generation_fitness:
-                            best_generation_fitness = fitness
-                            best_generation_gene = deepcopy(gene)
+                        if memory_usage_pct > 85:  # Threshold 85%
+                            logger.warning(f"High memory usage detected: {memory_usage_pct:.1f}%")
+                            gc.collect()
+                            time.sleep(0.5)  # Attende pulizia memoria
+                        
+                        # Prepara il batch corrente
+                        batch_end = min(i + optimal_batch_size, len(self.population))
+                        batch = [(gene, simulator) for gene in self.population[i:batch_end]]
+                        
+                        # Usa imap_unordered per processamento asincrono efficiente
+                        batch_iterator = pool.imap_unordered(
+                            self._evaluate_gene_parallel, 
+                            batch,
+                            chunksize=max(1, len(batch) // max_processes)
+                        )
+                        
+                        # Processa i risultati man mano che arrivano
+                        for gene, fitness in batch_iterator:
+                            fitness_scores.append(fitness)
+                            
+                            if fitness > best_generation_fitness:
+                                best_generation_fitness = fitness
+                                best_generation_gene = deepcopy(gene)
+                                logger.debug(f"New best fitness: {best_generation_fitness:.6f}")
+                        
+                        # Log progresso
+                        progress = min(100, (batch_end / len(self.population)) * 100)
+                        logger.info(f"Progress: {progress:.1f}% - Batch {i//optimal_batch_size + 1}")
+                        
+                        # Breve pausa tra batch per gestione risorse
+                        time.sleep(0.05)
+                        
+                except Exception as e:
+                    logger.error(f"Error in batch processing: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    raise
+                    
+                finally:
+                    # Cleanup esplicito
+                    pool.close()
+                    pool.join()
+                    gc.collect()
+            
+            # Statistiche finali
+            logger.info("\nEvaluation Results:")
+            logger.info(f"Total Evaluations: {len(fitness_scores)}")
+            logger.info(f"Best Fitness: {best_generation_fitness:.6f}")
+            logger.info(f"Average Fitness: {sum(fitness_scores)/len(fitness_scores):.6f}")
             
             return fitness_scores, best_generation_fitness, best_generation_gene
             
         except Exception as e:
-            logger.error(f"Error in population evaluation: {str(e)}")
+            logger.error(f"Critical error in population evaluation: {str(e)}")
             logger.error(traceback.format_exc())
             raise
-
+        
     def _evaluate_gene_parallel(self, args: Tuple[TradingGene, TradingSimulator]) -> Tuple[TradingGene, float]:
-        """Valutazione parallela di un singolo gene"""
+        """Valutazione parallela di un singolo gene con gestione ottimizzata della memoria"""
         gene, simulator = args
         process_id = multiprocessing.current_process().name
         
         try:
-            # Generate entry conditions
+            # Crea una copia leggera dei dati necessari
             entry_conditions = gene.generate_entry_conditions(self.precalculated_data)
             
-            # Run simulation
+            # Esegui simulazione con dati ridotti
             metrics = simulator.run_simulation_vectorized(entry_conditions)
             
-            # Calculate fitness
+            # Calcola fitness e pulisci
             fitness = self._calculate_fitness(metrics)
             gene.fitness_score = fitness
+            
+            # Forza pulizia memoria
+            del entry_conditions
+            gc.collect()
             
             return gene, fitness
             
@@ -775,16 +740,293 @@ class ParallelGeneticOptimizer:
             logger.error(traceback.format_exc())
             return gene, 0.0
 
-    def _tournament_selection(self, population: List[TradingGene], selection_probs: np.ndarray) -> TradingGene:
-        """Tournament selection with fitness-proportional probability"""
-        tournament_idx = np.random.choice(
-            len(population),
-            size=self.tournament_size,
-            replace=False
-        )
+    def _adaptive_mutation_rate(self, generation: int, plateau_length: int) -> float:
+        """Calcola un tasso di mutazione adattivo basato sullo stato dell'evoluzione"""
+        base_rate = self.mutation_rate
         
-        tournament_probs = selection_probs[tournament_idx]
-        tournament_probs = tournament_probs / tournament_probs.sum()
+        # Aumenta il tasso se siamo in un plateau
+        if plateau_length > 0:
+            plateau_factor = min(2.0, 1.0 + (plateau_length / self.restart_threshold))
+            base_rate *= plateau_factor
         
-        winner_idx = np.random.choice(tournament_idx, p=tournament_probs)
-        return population[winner_idx]
+        # Diminuisce il tasso se stiamo migliorando
+        if len(self.generation_stats) > 1:
+            last_improvement = self.generation_stats[-1]['best_fitness'] - self.generation_stats[-2]['best_fitness']
+            if last_improvement > 0:
+                improvement_factor = max(0.5, 1.0 - (last_improvement * 2))
+                base_rate *= improvement_factor
+        
+        # Limiti di sicurezza
+        return min(0.8, max(0.1, base_rate))
+
+    def _dynamic_tournament_size(self, diversity: float) -> int:
+        """Adatta la dimensione del torneo in base alla diversità"""
+        base_size = self.tournament_size
+        if diversity < self.diversity_threshold:
+            # Riduce la pressione selettiva quando la diversità è bassa
+            return max(2, base_size - 1)
+        elif diversity > self.diversity_threshold * 1.5:
+            # Aumenta la pressione selettiva quando la diversità è alta
+            return min(8, base_size + 1)
+        return base_size
+
+    def _calculate_plateau_length(self) -> int:
+        """Calcola la lunghezza dell'attuale plateau"""
+        if len(self.generation_stats) < 2:
+            return 0
+            
+        current_best = self.generation_stats[-1]['best_fitness']
+        plateau_length = 0
+        
+        for i in range(len(self.generation_stats) - 2, -1, -1):
+            if abs(self.generation_stats[i]['best_fitness'] - current_best) < 1e-6:
+                plateau_length += 1
+            else:
+                break
+                
+        return plateau_length
+
+    def _enhanced_selection_and_reproduction(self, population: List[TradingGene], 
+                                            fitness_scores: List[float]) -> List[TradingGene]:
+        """Versione migliorata e robusta della selezione e riproduzione"""
+        try:
+            # Calcola statistiche correnti
+            diversity = self._calculate_diversity()
+            plateau_length = self._calculate_plateau_length()
+            current_mutation_rate = self._adaptive_mutation_rate(
+                len(self.generation_stats), 
+                plateau_length
+            )
+            
+            # Converti e pulisci i fitness scores
+            fitness_scores = np.array(fitness_scores)
+            if np.all(np.isnan(fitness_scores)):
+                logger.warning("All fitness scores are NaN. Using uniform distribution.")
+                normalized_scores = np.ones_like(fitness_scores) / len(fitness_scores)
+            else:
+                # Sostituisci NaN con il minimo valore valido
+                min_valid = np.nanmin(fitness_scores)
+                fitness_scores = np.nan_to_num(fitness_scores, nan=min_valid)
+                
+                # Normalizza i punteggi
+                score_range = fitness_scores.max() - fitness_scores.min()
+                if score_range > 0:
+                    normalized_scores = (fitness_scores - fitness_scores.min()) / score_range
+                else:
+                    normalized_scores = np.ones_like(fitness_scores) / len(fitness_scores)
+
+            # Selezione elite
+            elite_indices = np.argsort(fitness_scores)[-self.elite_size:]
+            new_population = []
+            elite_signatures = set()
+            
+            for idx in elite_indices:
+                gene = deepcopy(population[idx])
+                signature = self._get_gene_signature(gene)
+                if signature not in elite_signatures:
+                    elite_signatures.add(signature)
+                    new_population.append(gene)
+
+            # Riproduzione principale con gestione errori
+            attempts = 0
+            max_attempts = self.population_size * 2  # Limite massimo di tentativi
+            
+            while len(new_population) < self.population_size and attempts < max_attempts:
+                try:
+                    if np.random.random() < 0.85:  # 85% crossover
+                        parent1 = self._tournament_selection(population, normalized_scores)
+                        parent2 = self._tournament_selection(population, normalized_scores)
+                        if parent1 is not None and parent2 is not None:
+                            child = parent1.crossover(parent2)
+                            child.mutate(current_mutation_rate)
+                    else:  # 15% mutazione forte
+                        parent = self._tournament_selection(population, normalized_scores)
+                        if parent is not None:
+                            child = deepcopy(parent)
+                            child.mutate(current_mutation_rate * 1.5)
+                    
+                    if child is not None:
+                        child_signature = self._get_gene_signature(child)
+                        if child_signature not in elite_signatures:
+                            new_population.append(child)
+                            elite_signatures.add(child_signature)
+                except Exception as e:
+                    logger.warning(f"Error in reproduction attempt: {str(e)}")
+                
+                attempts += 1
+            
+            # Se la popolazione è ancora troppo piccola, aggiungi individui random
+            while len(new_population) < self.population_size:
+                logger.warning("Adding random individuals to maintain population size")
+                new_gene = TradingGene(random_init=True)
+                new_population.append(new_gene)
+            
+            # Assicura diversità minima
+            if diversity < self.diversity_threshold:
+                self._inject_diversity(new_population)
+            
+            return new_population
+            
+        except Exception as e:
+            logger.error(f"Error in enhanced selection and reproduction: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Fallback: ritorna una nuova popolazione random
+            return [TradingGene(random_init=True) for _ in range(self.population_size)]
+
+    def optimize(self, simulator: TradingSimulator) -> Tuple[TradingGene, Dict]:
+        """Esegue l'ottimizzazione genetica con parametri adattivi e monitoraggio migliorato"""
+        try:
+            logger.info("Starting enhanced genetic optimization")
+            start_time = datetime.now()
+            
+            self.precalculated_data = self._precalculate_indicators(simulator.market_state)
+            self.population = self._initialize_population()
+            
+            generations_without_improvement = 0
+            best_overall_fitness = float('-inf')
+            last_restart_gen = 0
+            
+            for generation in range(self.generations):
+                generation_start = datetime.now()
+                logger.info(f"Generation {generation + 1}/{self.generations}")
+                
+                # Valuta popolazione
+                fitness_scores, best_gen_fitness, best_gen_gene = self._evaluate_population(simulator)
+                
+                # Aggiorna migliori risultati
+                if best_gen_fitness > best_overall_fitness:
+                    best_overall_fitness = best_gen_fitness
+                    self.best_gene = deepcopy(best_gen_gene)
+                    generations_without_improvement = 0
+                else:
+                    generations_without_improvement += 1
+                
+                # Adatta i parametri in base allo stato corrente
+                current_diversity = self._calculate_diversity()
+                plateau_length = self._calculate_plateau_length()
+                current_mutation_rate = self._adaptive_mutation_rate(generation, plateau_length)
+                self.mutation_rate = current_mutation_rate
+                
+                # Calcola statistiche dettagliate
+                gen_stats = {
+                    "generation": generation + 1,
+                    "best_fitness": best_gen_fitness,
+                    "avg_fitness": np.mean(fitness_scores),
+                    "std_fitness": np.std(fitness_scores),
+                    "diversity": current_diversity,
+                    "mutation_rate": current_mutation_rate,
+                    "plateau_length": plateau_length,
+                    "elapsed_time": (datetime.now() - generation_start).total_seconds()
+                }
+                self.generation_stats.append(gen_stats)
+                
+                # Log dei progressi dettagliati
+                logger.info(f"Best Fitness: {gen_stats['best_fitness']:.4f}")
+                logger.info(f"Average Fitness: {gen_stats['avg_fitness']:.4f}")
+                logger.info(f"Population Diversity: {gen_stats['diversity']:.4f}")
+                logger.info(f"Current Mutation Rate: {gen_stats['mutation_rate']:.4f}")
+                logger.info(f"Time: {gen_stats['elapsed_time']:.2f}s")
+                
+                # Gestione restart avanzata
+                if (self._check_for_restart() and 
+                    generation - last_restart_gen > self.restart_threshold):
+                    logger.info("Performing population restart...")
+                    self._perform_restart()
+                    last_restart_gen = generation
+                    generations_without_improvement = 0
+                
+                # Early stopping migliorato
+                if (generations_without_improvement >= self.restart_threshold and 
+                    current_diversity < self.diversity_threshold):
+                    if generation > self.generations * 0.5:  # Almeno 50% delle generazioni
+                        logger.info("Early stopping - No improvement and low diversity")
+                        break
+                    else:
+                        logger.info("Forced diversity injection due to stagnation")
+                        self._inject_diversity(self.population)
+                        generations_without_improvement = 0
+                
+                # Crea prossima generazione
+                if generation < self.generations - 1:
+                    self.population = self._selection_and_reproduction(
+                        self.population, fitness_scores
+                    )
+                
+                # Garbage collection periodico
+                if generation % 10 == 0:
+                    gc.collect()
+            
+            # Statistiche finali
+            total_time = (datetime.now() - start_time).total_seconds()
+            final_stats = {
+                "best_fitness": best_overall_fitness,
+                "generations": len(self.generation_stats),
+                "total_time": total_time,
+                "avg_generation_time": total_time / len(self.generation_stats),
+                "early_stopped": generations_without_improvement >= self.restart_threshold,
+                "final_population_size": len(self.population),
+                "final_diversity": self._calculate_diversity(),
+                "total_restarts": sum(1 for i in range(1, len(self.generation_stats))
+                                    if self.generation_stats[i]["diversity"] > 
+                                    self.generation_stats[i-1]["diversity"] * 1.5)
+            }
+            
+            logger.info("\nOptimization completed!")
+            logger.info(f"Best fitness achieved: {best_overall_fitness:.4f}")
+            logger.info(f"Total generations: {final_stats['generations']}")
+            logger.info(f"Total time: {final_stats['total_time']:.2f}s")
+            logger.info(f"Number of restarts: {final_stats['total_restarts']}")
+            
+            return self.best_gene, final_stats
+            
+        except Exception as e:
+            logger.error("Error in genetic optimization:")
+            logger.error(str(e))
+            logger.error(traceback.format_exc())
+            raise
+
+    def _selection_and_reproduction(self, population: List[TradingGene], fitness_scores: List[float]) -> List[TradingGene]:
+        """Wrapper per la versione migliorata della selezione e riproduzione"""
+        return self._enhanced_selection_and_reproduction(population, fitness_scores)
+
+    def _tournament_selection(self, population: List[TradingGene], fitness_scores: np.ndarray) -> TradingGene:
+            """Selezione tramite torneo con gestione robusta dei fitness scores"""
+            try:
+                # Seleziona indici random per il torneo
+                tournament_idx = np.random.choice(
+                    len(population), 
+                    size=self.tournament_size, 
+                    replace=False
+                )
+                
+                # Prendi i fitness scores per i candidati del torneo
+                tournament_scores = fitness_scores[tournament_idx]
+                
+                # Gestisci casi di score tutti uguali o nulli
+                if np.all(tournament_scores == tournament_scores[0]) or np.all(np.isnan(tournament_scores)):
+                    # Se tutti gli score sono uguali o NaN, scegli casualmente
+                    winner_idx = np.random.choice(tournament_idx)
+                else:
+                    # Normalizza gli score evitando divisione per zero
+                    min_score = np.nanmin(tournament_scores)
+                    max_score = np.nanmax(tournament_scores)
+                    
+                    if max_score == min_score:
+                        tournament_probs = np.ones_like(tournament_scores) / len(tournament_scores)
+                    else:
+                        # Normalizza tra 0 e 1, sostituendo NaN con 0
+                        normalized_scores = np.nan_to_num((tournament_scores - min_score) / (max_score - min_score))
+                        
+                        # Aggiungi una piccola costante per evitare probabilità zero
+                        tournament_probs = normalized_scores + 1e-10
+                        tournament_probs = tournament_probs / tournament_probs.sum()
+                    
+                    # Seleziona il vincitore
+                    winner_idx = np.random.choice(tournament_idx, p=tournament_probs)
+                
+                return deepcopy(population[winner_idx])
+                
+            except Exception as e:
+                logger.error(f"Error in tournament selection: {str(e)}")
+                # Fallback: ritorna un individuo casuale
+                return deepcopy(np.random.choice(population))

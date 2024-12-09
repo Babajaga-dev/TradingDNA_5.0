@@ -1,4 +1,4 @@
-# Configurazione bilanciata per evitare overflow risorse
+# Configurazione ottimizzata per evitare plateau e migliorare performance
 
 simulator:
   initial_capital: 10000
@@ -8,8 +8,8 @@ simulator:
 trading:
   position:
     size_pct: 5
-    stop_loss_pct: 2.0
-    take_profit_pct: 4.0
+    stop_loss_pct: 2.0     # Mantenuto come suggerito
+    take_profit_pct: 4.0   # Aumentato per miglior rapporto rischio/rendimento
   
   indicators:
     entry:
@@ -41,8 +41,8 @@ trading:
         max: 100  
         default: 14
       multiplier:
-        min: 0.3  
-        max: 3.0  
+        min: 0.4   # Modificato da 0.3
+        max: 2.5   # Modificato da 3.0
         default: 1.0
       base_position_size:
         min: 0.5  
@@ -105,33 +105,32 @@ trading:
       - SHOOTINGSTAR
       - MARUBOZU
 
-# Configurazione ottimizzata per CPU i7 1551H
-
 genetic:
-  # Parametri base bilanciati
-  population_size: 480       # Ridotto (480 = 12 * 40)
-  generations: 150           # Mantenuto per risultati di qualità
-  mutation_rate: 0.38
-  elite_size: 3
-  tournament_size: 3
+  # Parametri base ottimizzati
+  population_size: 320       
+  generations: 150          
+  mutation_rate: 0.45       # Aumentato da 0.38
+  elite_size: 5             # Aumentato da 3
+  tournament_size: 5        # Aumentato da 3
   min_trades: 50
-  parallel_processes: 12     # Ridotto per gestire meglio la memoria
-  batch_size: 40            # Aumentato per efficienza CPU/memoria
+  parallel_processes: 20    
+  batch_size: 40           # Aumentato da 40
+  memory_reserve_gb: 1   # GB da riservare per il sistema
+  memory_per_process_mb: 100
   
-  # Parametri di gestione plateau
-  mutation_decay: 0.988
-  diversity_threshold: 0.18
-  restart_threshold: 15
+  # Parametri anti-plateau ottimizzati
+  mutation_decay: 0.995     # Modificato da 0.988
+  diversity_threshold: 0.25 # Aumentato da 0.18
+  restart_threshold: 8     # Diminuito da 15
   improvement_threshold: 0.002
   restart_elite_fraction: 0.12
   restart_mutation_multiplier: 2.2
 
   optimizer:
     use_gpu: false
-    torch_threads: 16       # Ridotto per bilanciare CPU/memoria
+    torch_threads: 16      
     batch_norm: true
     precision: "float32"
-
 
   ensemble_weights:
     base_gene: 0.3
@@ -139,16 +138,16 @@ genetic:
     momentum_gene: 0.25
     pattern_gene: 0.2
 
-  # Pesi fitness
+  # Pesi fitness ottimizzati
   fitness_weights:
     profit_score:
       total_pnl: 0.35
-      max_drawdown: 0.35
-      sharpe_ratio: 0.30
+      max_drawdown: 0.25    # Diminuito da 0.35
+      sharpe_ratio: 0.40    # Aumentato da 0.30
     quality_score:
       win_rate: 0.45
-      trade_frequency: 0.35
-      consistency: 0.20
+      trade_frequency: 0.25 # Diminuito da 0.35
+      consistency: 0.30     # Aumentato da 0.20
     final_weights:
       profit: 0.50
       quality: 0.40
@@ -157,7 +156,7 @@ genetic:
 download:
   symbol: "BTCUSDT"
   interval: "1m"
-  start_date: "2024-11-25"
+  start_date: "2024-06-09"
   end_date: null
   batch_size: 1000
   output_folder: "data"
