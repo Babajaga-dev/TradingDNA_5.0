@@ -1,15 +1,15 @@
-# Configurazione del Trading System
+# Configurazione bilanciata per evitare overflow risorse
 
 simulator:
-  initial_capital: 10000  # Capitale iniziale per il trading
-  min_candles: 50        # Numero minimo di candele necessarie per gli indicatori
-  data_file: "market_data_BTC_1m.csv"  # Nome del file dati da utilizzare
+  initial_capital: 10000
+  min_candles: 50
+  data_file: "market_data_BTC_1m.csv"
 
 trading:
   position:
-    size_pct: 5          # Percentuale del capitale per posizione
-    stop_loss_pct: 2.0   # Percentuale stop loss
-    take_profit_pct: 4.0 # Percentuale take profit
+    size_pct: 5
+    stop_loss_pct: 2.0
+    take_profit_pct: 4.0
   
   indicators:
     entry:
@@ -21,8 +21,8 @@ trading:
         type: "SMA"
         params:
           timeperiod: 50
-      operator: "cross_above"  # Possibili valori: ">", "<", "cross_above", "cross_below"
-    
+      operator: "cross_above"
+
     exit:
       indicator1:
         type: "RSI"
@@ -33,44 +33,43 @@ trading:
         params: {}
       operator: ">"
 
-  # Parametri per i geni specializzati
   volatility_gene:
     enabled: true
     parameters:
       timeperiod:
-        min: 10
-        max: 50
+        min: 5    
+        max: 100  
         default: 14
       multiplier:
-        min: 0.5
-        max: 2.0
+        min: 0.3  
+        max: 3.0  
         default: 1.0
       base_position_size:
-        min: 1.0
-        max: 10.0
+        min: 0.5  
+        max: 15.0 
         default: 5.0
       atr_limits:
-        min_size: 1.0
-        max_size: 20.0
+        min_size: 0.5
+        max_size: 25.0
 
   momentum_gene:
     enabled: true
     parameters:
       momentum_threshold:
-        min: 60
-        max: 80
+        min: 50
+        max: 90
         default: 70
       trend_strength:
-        min: 20
-        max: 30
+        min: 15
+        max: 35
         default: 25
       overbought_level:
-        min: 75
-        max: 85
+        min: 70
+        max: 90
         default: 80
       oversold_level:
-        min: 15
-        max: 25
+        min: 10
+        max: 30
         default: 20
       rsi:
         timeperiod: 14
@@ -86,15 +85,15 @@ trading:
     parameters:
       required_patterns:
         min: 1
-        max: 3
+        max: 4
         default: 2
       pattern_window:
         min: 2
-        max: 5
+        max: 7
         default: 3
       confirmation_periods:
         min: 1
-        max: 3
+        max: 4
         default: 1
     patterns:
       - ENGULFING
@@ -106,40 +105,54 @@ trading:
       - SHOOTINGSTAR
       - MARUBOZU
 
-genetic:
-  population_size: 300     # Aumentato
-  generations: 100         # Aumentato
-  mutation_rate: 0.2      # Aumentato per maggiore esplorazione
-  elite_size: 5           # Ridotto
-  tournament_size: 5      # Ridotto per minore pressione selettiva
-  min_trades: 50          # Aumentato per maggiore robustezza
-  parallel_processes: 10  # Parallelizzazione
-  batch_size: 32         # Dimensione batch
-  
-  optimizer:
-    use_gpu: false       # Usa GPU se disponibile
-    torch_threads: -1    # -1 usa tutti i thread disponibili
-    batch_norm: true     # Usa batch normalization
-    precision: "float32" # Può essere "float32" o "float16"
+# Configurazione ottimizzata per CPU i7 1551H
 
-  # Pesi per l'ensemble di geni
+genetic:
+  # Parametri base bilanciati
+  population_size: 480       # Ridotto (480 = 12 * 40)
+  generations: 150           # Mantenuto per risultati di qualità
+  mutation_rate: 0.38
+  elite_size: 3
+  tournament_size: 3
+  min_trades: 50
+  parallel_processes: 12     # Ridotto per gestire meglio la memoria
+  batch_size: 40            # Aumentato per efficienza CPU/memoria
+  
+  # Parametri di gestione plateau
+  mutation_decay: 0.988
+  diversity_threshold: 0.18
+  restart_threshold: 15
+  improvement_threshold: 0.002
+  restart_elite_fraction: 0.12
+  restart_mutation_multiplier: 2.2
+
+  optimizer:
+    use_gpu: false
+    torch_threads: 16       # Ridotto per bilanciare CPU/memoria
+    batch_norm: true
+    precision: "float32"
+
+
   ensemble_weights:
-    base_gene: 0.4
-    volatility_gene: 0.2
-    momentum_gene: 0.2
+    base_gene: 0.3
+    volatility_gene: 0.25
+    momentum_gene: 0.25
     pattern_gene: 0.2
 
+  # Pesi fitness
   fitness_weights:
     profit_score:
-      total_pnl: 0.4
-      max_drawdown: 0.3
-      sharpe_ratio: 0.3
+      total_pnl: 0.35
+      max_drawdown: 0.35
+      sharpe_ratio: 0.30
     quality_score:
-      win_rate: 0.6
-      trade_frequency: 0.4
+      win_rate: 0.45
+      trade_frequency: 0.35
+      consistency: 0.20
     final_weights:
-      profit: 0.6
-      quality: 0.4
+      profit: 0.50
+      quality: 0.40
+      diversity: 0.10
 
 download:
   symbol: "BTCUSDT"
