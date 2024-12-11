@@ -1,9 +1,40 @@
-# Configurazione ottimizzata per sistema con 4x RTX 3060
+# Configurazione ottimizzata per GTX 1070 (8GB VRAM)
 
 simulator:
   initial_capital: 10000
   min_candles: 50
   data_file: "market_data_BTC_1m.csv"
+  metrics:
+    returns_limit: 10.0  # Limite ±1000% per returns
+    min_equity: 1e-6    # Valore minimo per equity
+    annualization_factor: 252  # Fattore annualizzazione Sharpe ratio
+    element_size_bytes: 32  # Byte per elemento per calcolo batch size
+
+system:
+  environment_check:
+    hugepages:
+      min_count: 128
+    memory:
+      min_total_gb: 8
+      min_available_gb: 4
+    gpu:
+      command_timeout_sec: 10
+  
+  process:
+    linux:
+      nice_high: -10
+      nice_low: 10
+      oom_score: 1000
+    memory:
+      gpu_reserve_pct: 0.8
+      ram_reserve_pct: 0.5
+    batch:
+      max_size: 8192
+      default_size: 32
+      fallback_size: 32
+    workers:
+      max_count: 8
+      reserved_cores: 1
 
 trading:
   position:
@@ -32,6 +63,32 @@ trading:
         type: "CLOSE"
         params: {}
       operator: ">"
+
+    parameters:
+      bollinger:
+        num_std: 2.0
+      rsi:
+        epsilon: 1e-10
+        scale: 100.0
+      macd:
+        fast_period: 12
+        slow_period: 26
+        signal_period: 9
+      ema:
+        alpha_multiplier: 2.0
+      ranges:
+        timeperiod:
+          min: 5
+          max: 50
+        fast_period:
+          min: 5
+          max: 20
+        slow_period:
+          min: 15
+          max: 40
+        signal_period:
+          min: 5
+          max: 15
 
   volatility_gene:
     enabled: true
@@ -106,42 +163,123 @@ trading:
       - MARUBOZU
 
 genetic:
-  # Ottimizzato per 4x RTX 3060 (49.5 TFLOPS totali)
-  population_size: 512       # Aumentato per sfruttare la potenza di calcolo
-  generations: 200          # Aumentato per una ricerca più approfondita
+  # Parametri base
+  population_size: 65536
+  generations: 200
   mutation_rate: 0.45
-  elite_size: 8             # Aumentato per preservare più soluzioni ottime
-  tournament_size: 6
+  elite_size: 256
+  tournament_size: 16
   min_trades: 50
-  parallel_processes: 32    # Ottimizzato per 2x Xeon E5-2682 v4 (64 thread totali)
-  batch_size: 64           # Ottimizzato per la memoria GPU della 3060 (12GB)
-  memory_reserve_gb: 8     # Riservato per sistema (48GB RAM totali)
-  memory_per_process_mb: 512  # Aumentato per processi più efficienti
+  batch_size: 64
 
-  # Parametri anti-plateau ottimizzati
+  # Parametri dei geni
+  gene_parameters:
+    common_pairs_probability: 0.6
+    same_group_periods_probability: 0.7
+    stop_loss:
+      min: 0.5
+      max: 5.0
+      mutation_std: 0.5
+    take_profit:
+      min: 1.0
+      max: 10.0
+      mutation_std: 1.0
+      min_multiplier: 1.5
+
+  # Parametri evolutivi
   mutation_decay: 0.995
   diversity_threshold: 0.25
-  restart_threshold: 10
+  restart_threshold: 8
   improvement_threshold: 0.002
-  restart_elite_fraction: 0.15
+  restart_elite_fraction: 0.12
   restart_mutation_multiplier: 2.2
 
+  # Parametri diversità
+  diversity:
+    top_performer_threshold: 0.8
+    performance_bonus_limit: 0.1
+    performance_bonus_multiplier: 0.2
+    injection_fraction: 0.2
+
+  # Parametri riproduzione
+  reproduction:
+    crossover_probability: 0.85
+    strong_mutation_multiplier: 1.5
+    max_attempts_multiplier: 2.0
+
+  # Parametri adattivi
+  adaptive_mutation:
+    plateau_max_factor: 2.0
+    plateau_base_factor: 1.0
+    improvement_min_factor: 0.5
+    improvement_base_factor: 1.0
+    rate_min: 0.1
+    rate_max: 0.8
+    fitness_std_multiplier: 2.0
+
+  # Configurazione GPU e ottimizzazione
   optimizer:
-    use_gpu: true          # Abilitato per le 4x RTX 3060
-    torch_threads: 64      # Ottimizzato per i thread CPU disponibili
-    batch_norm: true
+    use_gpu: true
     device_config:
-      precision: "float32"   # Le RTX 3060 supportano FP32 nativamente
-      memory_reserve: 2048  # 2GB per GPU riservati
-      max_batch_size: 2048  # Ottimizzato per memoria GPU
-      mixed_precision: true # Abilitato per migliori performance
-      cuda_graph: true
-      profiler: false
-    linux_specific:
-      num_workers: 16      # Ottimizzato per il sistema multi-CPU
-      pin_memory: true
-      shared_memory: true
-      process_affinity: true
+      precision: "float32"
+      max_batch_size: 524288
+      memory_reserve: 2048
+      mixed_precision: false
+    
+    cuda_config:
+      compute_capability: "6.1"
+      optimization_level: 3
+      allow_tf32: true
+      benchmark: true
+      deterministic: false
+      memory_strategy:
+        preallocate: true
+        prealloc_threshold: 0.5
+        empty_cache_threshold: 0.9
+        force_release_threshold: 0.95
+    
+    linux_specific: {}
+
+    # Parametri di normalizzazione e calcolo fitness
+    normalization:
+      epsilon: 1e-8
+    fitness_calculation:
+      sharpe_normalization: 3.0
+      trade_frequency_target: 100
+      consistency_normalization: 2.0
+
+  # Monitoraggio performance
+  performance_monitoring:
+    enabled: true
+    metrics_interval: 2
+    memory_warnings: true
+    threshold_utilization: 0.95
+
+  # Batch processing
+  batch_processing:
+    enabled: true
+    adaptive_batching: true
+    min_batch_size: 262144
+    max_batch_size: 524288
+    memory_limit: 7900
+    prefetch_factor: 6
+    overlap_transfers: true
+
+  # Memory management
+  memory_management:
+    preallocation: true
+    cache_mode: "all"
+    release_threshold: 0.99
+    defrag_threshold: 0.9
+    periodic_gc: false
+
+  # Parallel config
+  parallel_config:
+    chunk_size: 512
+    cuda_streams: 4
+    async_loading: true
+    pin_memory: true
+    persistent_workers: true
 
   ensemble_weights:
     base_gene: 0.3
@@ -162,12 +300,22 @@ genetic:
       profit: 0.50
       quality: 0.40
       diversity: 0.10
+    penalties:
+      max_trades:
+        limit: 500
+        penalty: 0.8
+      max_drawdown:
+        limit: 0.3
+        penalty: 0.7
+      min_win_rate:
+        limit: 0.4
+        penalty: 0.9
 
 download:
   symbol: "BTCUSDT"
   interval: "1m"
-  start_date: "2024-06-09"
-  end_date: null
+  start_date: "2024-01-01"
+  end_date: null  
   batch_size: 1000
   output_folder: "data"
   api:

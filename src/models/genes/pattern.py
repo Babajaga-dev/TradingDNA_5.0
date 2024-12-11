@@ -3,13 +3,14 @@ import numpy as np
 import talib
 from typing import List, Dict
 
-from .base import TradingGene
+from .base import TradingGene, GeneType
 from ..common import Signal, SignalType, MarketData
 from ...utils.config import config
 
 class PatternRecognitionGene(TradingGene):
     def __init__(self, random_init=True):
         super().__init__(random_init=False)
+        self.gene_type = GeneType.PATTERN.value
         
         self.pattern_name_map = {
             "ENGULFING": "CDLENGULFING",

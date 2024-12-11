@@ -3,7 +3,7 @@ import numpy as np
 import talib
 from typing import List
 
-from .base import TradingGene
+from .base import TradingGene, GeneType
 from .indicators import calculate_stoch
 from ..common import Signal, SignalType, MarketData
 from ...utils.config import config
@@ -11,6 +11,7 @@ from ...utils.config import config
 class MomentumGene(TradingGene):
     def __init__(self, random_init=True):
         super().__init__(random_init=False)
+        self.gene_type = GeneType.MOMENTUM.value
         
         params = config.get("trading.momentum_gene.parameters", {})
         

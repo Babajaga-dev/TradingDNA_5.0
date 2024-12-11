@@ -31,15 +31,17 @@ def to_tensor(data: Union[np.ndarray, torch.Tensor],
 def calculate_fitness(metrics: Dict[str, Any], 
                      min_trades: int,
                      initial_capital: float,
-                     weights: Dict[str, Any]) -> float:
+                     weights: Dict[str, Any],
+                     ensemble_weights: Dict[str, float]) -> float:
     """
-    Calcola il fitness score
+    Calcola il fitness score con supporto per ensemble
     
     Args:
         metrics: Dizionario delle metriche
         min_trades: Numero minimo di trade richiesti
         initial_capital: Capitale iniziale
         weights: Pesi per il calcolo del fitness
+        ensemble_weights: Pesi per i diversi tipi di geni nell'ensemble
         
     Returns:
         Score di fitness
@@ -52,12 +54,14 @@ def calculate_fitness(metrics: Dict[str, Any],
         quality_weights = weights.get("quality_score", {})
         final_weights = weights.get("final_weights", {})
         
+        # Calcolo profit score
         profit_score = (
             profit_weights.get("total_pnl", 0.30) * metrics["total_pnl"] / initial_capital +
             profit_weights.get("max_drawdown", 0.35) * (1 - metrics["max_drawdown"]) +
             profit_weights.get("sharpe_ratio", 0.35) * max(0, metrics["sharpe_ratio"]) / 3
         )
         
+        # Calcolo quality score
         quality_score = (
             quality_weights.get("win_rate", 0.4) * metrics["win_rate"] +
             quality_weights.get("trade_frequency", 0.4) * min(1.0, metrics["total_trades"] / 100)
@@ -68,11 +72,18 @@ def calculate_fitness(metrics: Dict[str, Any],
                               (metrics["profit_factor"] - 1) / 2
             quality_score += consistency_score
         
-        final_score = (
+        # Calcolo base score
+        base_score = (
             final_weights.get("profit", 0.45) * profit_score +
             final_weights.get("quality", 0.45) * quality_score
         )
         
+        # Applica pesi ensemble se presenti
+        gene_type = metrics.get("gene_type", "base_gene")
+        if gene_type in ensemble_weights:
+            base_score *= ensemble_weights[gene_type]
+        
+        # Applica penalità
         penalties = 1.0
         if metrics["total_trades"] > 500:
             penalties *= 0.8
@@ -81,7 +92,12 @@ def calculate_fitness(metrics: Dict[str, Any],
         if metrics["win_rate"] < 0.4:
             penalties *= 0.9
         
-        return max(0.0, final_score * penalties)
+        # Aggiungi diversity bonus se presente
+        if "diversity_score" in metrics:
+            diversity_bonus = final_weights.get("diversity", 0.1) * metrics["diversity_score"]
+            base_score += diversity_bonus
+        
+        return max(0.0, base_score * penalties)
         
     except Exception as e:
         logger.error(f"Error calculating fitness: {e}")
