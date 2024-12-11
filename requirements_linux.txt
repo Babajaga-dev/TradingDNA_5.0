@@ -1,0 +1,26 @@
+# Base requirements
+numpy<1.20.0
+pandas
+matplotlib
+python-binance
+pyyaml
+psutil
+typing-extensions
+tqdm
+matplotlib
+scikit-learn
+
+
+
+# Optimization
+numba>=0.58.0
+cupy-cuda12x>=13.0.0
+torch-tensorrt>=1.4.0
+
+# Monitoring
+gputil>=1.4.0
+py3nvml>=0.2.7
+nvidia-ml-py>=12.535.77
+
+# Note: ta-lib deve essere installato con il comando:
+# conda install -c conda-forge ta-lib

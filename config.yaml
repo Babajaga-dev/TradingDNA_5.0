@@ -1,4 +1,4 @@
-# Configurazione ottimizzata per evitare plateau e migliorare performance
+# Configurazione ottimizzata per sistema con 4x RTX 3060
 
 simulator:
   initial_capital: 10000
@@ -8,9 +8,9 @@ simulator:
 trading:
   position:
     size_pct: 5
-    stop_loss_pct: 2.0     # Mantenuto come suggerito
-    take_profit_pct: 4.0   # Aumentato per miglior rapporto rischio/rendimento
-  
+    stop_loss_pct: 2.0
+    take_profit_pct: 4.0
+
   indicators:
     entry:
       indicator1:
@@ -37,16 +37,16 @@ trading:
     enabled: true
     parameters:
       timeperiod:
-        min: 5    
-        max: 100  
+        min: 5
+        max: 100
         default: 14
       multiplier:
-        min: 0.4   # Modificato da 0.3
-        max: 2.5   # Modificato da 3.0
+        min: 0.4
+        max: 2.5
         default: 1.0
       base_position_size:
-        min: 0.5  
-        max: 15.0 
+        min: 0.5
+        max: 15.0
         default: 5.0
       atr_limits:
         min_size: 0.5
@@ -106,31 +106,42 @@ trading:
       - MARUBOZU
 
 genetic:
-  # Parametri base ottimizzati
-  population_size: 320       
-  generations: 150          
-  mutation_rate: 0.45       # Aumentato da 0.38
-  elite_size: 5             # Aumentato da 3
-  tournament_size: 5        # Aumentato da 3
+  # Ottimizzato per 4x RTX 3060 (49.5 TFLOPS totali)
+  population_size: 512       # Aumentato per sfruttare la potenza di calcolo
+  generations: 200          # Aumentato per una ricerca più approfondita
+  mutation_rate: 0.45
+  elite_size: 8             # Aumentato per preservare più soluzioni ottime
+  tournament_size: 6
   min_trades: 50
-  parallel_processes: 20    
-  batch_size: 40           # Aumentato da 40
-  memory_reserve_gb: 1   # GB da riservare per il sistema
-  memory_per_process_mb: 100
-  
+  parallel_processes: 32    # Ottimizzato per 2x Xeon E5-2682 v4 (64 thread totali)
+  batch_size: 64           # Ottimizzato per la memoria GPU della 3060 (12GB)
+  memory_reserve_gb: 8     # Riservato per sistema (48GB RAM totali)
+  memory_per_process_mb: 512  # Aumentato per processi più efficienti
+
   # Parametri anti-plateau ottimizzati
-  mutation_decay: 0.995     # Modificato da 0.988
-  diversity_threshold: 0.25 # Aumentato da 0.18
-  restart_threshold: 8     # Diminuito da 15
+  mutation_decay: 0.995
+  diversity_threshold: 0.25
+  restart_threshold: 10
   improvement_threshold: 0.002
-  restart_elite_fraction: 0.12
+  restart_elite_fraction: 0.15
   restart_mutation_multiplier: 2.2
 
   optimizer:
-    use_gpu: false
-    torch_threads: 16      
+    use_gpu: true          # Abilitato per le 4x RTX 3060
+    torch_threads: 64      # Ottimizzato per i thread CPU disponibili
     batch_norm: true
-    precision: "float32"
+    device_config:
+      precision: "float32"   # Le RTX 3060 supportano FP32 nativamente
+      memory_reserve: 2048  # 2GB per GPU riservati
+      max_batch_size: 2048  # Ottimizzato per memoria GPU
+      mixed_precision: true # Abilitato per migliori performance
+      cuda_graph: true
+      profiler: false
+    linux_specific:
+      num_workers: 16      # Ottimizzato per il sistema multi-CPU
+      pin_memory: true
+      shared_memory: true
+      process_affinity: true
 
   ensemble_weights:
     base_gene: 0.3
@@ -138,16 +149,15 @@ genetic:
     momentum_gene: 0.25
     pattern_gene: 0.2
 
-  # Pesi fitness ottimizzati
   fitness_weights:
     profit_score:
       total_pnl: 0.35
-      max_drawdown: 0.25    # Diminuito da 0.35
-      sharpe_ratio: 0.40    # Aumentato da 0.30
+      max_drawdown: 0.25
+      sharpe_ratio: 0.40
     quality_score:
       win_rate: 0.45
-      trade_frequency: 0.25 # Diminuito da 0.35
-      consistency: 0.30     # Aumentato da 0.20
+      trade_frequency: 0.25
+      consistency: 0.30
     final_weights:
       profit: 0.50
       quality: 0.40
