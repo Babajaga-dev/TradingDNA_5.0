@@ -12,7 +12,7 @@ import traceback
 from src.utils.data import load_and_prepare_data
 from src.models.common import TimeFrame
 from src.models.simulator import TradingSimulator
-from src.optimization.genetic import ParallelGeneticOptimizer
+from src.optimization.genetic_optimizer import ParallelGeneticOptimizer
 from src.utils.config import config
 
 logging.basicConfig(level=logging.INFO)

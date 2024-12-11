@@ -1,9 +1,2 @@
-# src/optimization/__init__.py
-from .genetic import ParallelGeneticOptimizer
+from .genetic_optimizer import ParallelGeneticOptimizer
 from .ensemble import EnsembleGeneOptimizer, EnsembleSignalCombiner
-
-__all__ = [
-    'ParallelGeneticOptimizer',
-    'EnsembleGeneOptimizer',
-    'EnsembleSignalCombiner'
-]

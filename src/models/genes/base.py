@@ -14,6 +14,12 @@ class Operator(Enum):
     CROSS_ABOVE = "cross_above"
     CROSS_BELOW = "cross_below"
 
+class GeneType(Enum):
+    BASE = "base_gene"
+    MOMENTUM = "momentum_gene"
+    VOLATILITY = "volatility_gene"
+    PATTERN = "pattern_gene"
+
 class TradingGene:
     # Indicatori che richiedono timeperiod
     TIMEPERIOD_INDICATORS = ["SMA", "EMA", "RSI", "BB_UPPER", "BB_LOWER"]
@@ -41,6 +47,7 @@ class TradingGene:
     def __init__(self, random_init=True):
         self.fitness_score = None
         self.dna = {}
+        self.gene_type = GeneType.BASE.value
         
         if random_init:
             self.randomize_dna()
@@ -251,6 +258,7 @@ class TradingGene:
         try:
             child = TradingGene(random_init=False)
             child.dna = {}
+            child.gene_type = self.gene_type  # Mantiene il tipo di gene del genitore
             
             for key in self.dna:
                 # Gestione speciale per gli indicatori e i loro parametri

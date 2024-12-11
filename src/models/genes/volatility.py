@@ -2,7 +2,7 @@
 import numpy as np
 from typing import List
 
-from .base import TradingGene
+from .base import TradingGene, GeneType
 from .indicators import calculate_atr
 from ..common import Signal, SignalType, MarketData
 from ...utils.config import config
@@ -10,6 +10,7 @@ from ...utils.config import config
 class VolatilityAdaptiveGene(TradingGene):
     def __init__(self, random_init=True):
         super().__init__(random_init=False)
+        self.gene_type = GeneType.VOLATILITY.value
         
         params = config.get("trading.volatility_gene.parameters", {})
         
