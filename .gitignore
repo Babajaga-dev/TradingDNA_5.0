@@ -164,3 +164,6 @@ cython_debug/
 # Large files
 *.txt filter=lfs diff=lfs merge=lfs -text
 error.txt
+evolution_plots/
+evolution_reports/
+evolution_state.pkl

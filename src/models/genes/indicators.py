@@ -4,6 +4,7 @@ import talib
 import logging
 from typing import List
 from ..common import MarketData
+from ...utils.config import Config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,6 +13,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+config = Config()
 
 def calculate_bb_upper(x: np.ndarray, timeperiod: int) -> np.ndarray:
     try:
@@ -42,7 +44,9 @@ def calculate_ema(x: np.ndarray, timeperiod: int) -> np.ndarray:
     try:
         if len(x) < timeperiod:
             return np.full_like(x, np.nan)
-        return talib.EMA(x, timeperiod=timeperiod)
+        alpha_multiplier = config.get("trading.indicators.parameters.ema.alpha_multiplier", 2.0)
+        alpha = alpha_multiplier / (timeperiod + 1)
+        return talib.EMA(x, timeperiod=timeperiod) * alpha
     except Exception as e:
         logger.error(f"Errore EMA: {str(e)}")
         return np.full_like(x, np.nan)
@@ -51,16 +55,42 @@ def calculate_rsi(x: np.ndarray, timeperiod: int) -> np.ndarray:
     try:
         if len(x) < timeperiod + 1:
             return np.full_like(x, np.nan)
-        return talib.RSI(x, timeperiod=timeperiod)
+        
+        # Ottieni parametri RSI dal config
+        rsi_params = config.get("trading.indicators.parameters.rsi", {})
+        epsilon = rsi_params.get("epsilon", 1e-10)
+        scale = rsi_params.get("scale", 100.0)
+        
+        # Calcola RSI con parametri configurati
+        delta = np.diff(x)
+        gains = np.where(delta > 0, delta, 0)
+        losses = np.where(delta < 0, -delta, 0)
+        
+        avg_gains = np.convolve(gains, np.ones(timeperiod)/timeperiod, mode='valid')
+        avg_losses = np.convolve(losses, np.ones(timeperiod)/timeperiod, mode='valid')
+        
+        rs = avg_gains / (avg_losses + epsilon)
+        rsi = scale - (scale / (1 + rs))
+        
+        # Padding per mantenere la lunghezza originale
+        padding = np.full(timeperiod, np.nan)
+        return np.concatenate([padding, rsi])
     except Exception as e:
         logger.error(f"Errore RSI: {str(e)}")
         return np.full_like(x, np.nan)
 
-def calculate_macd(x: np.ndarray, fastperiod: int = 12, 
-                  slowperiod: int = 26, signalperiod: int = 9) -> np.ndarray:
+def calculate_macd(x: np.ndarray, fastperiod: int = None, 
+                  slowperiod: int = None, signalperiod: int = None) -> np.ndarray:
     try:
+        # Ottieni parametri MACD dal config
+        macd_params = config.get("trading.indicators.parameters.macd", {})
+        fastperiod = fastperiod or macd_params.get("fast_period", 12)
+        slowperiod = slowperiod or macd_params.get("slow_period", 26)
+        signalperiod = signalperiod or macd_params.get("signal_period", 9)
+        
         if len(x) < max(fastperiod, slowperiod, signalperiod):
             return np.full_like(x, np.nan)
+            
         macd, _, _ = talib.MACD(x, fastperiod=fastperiod, 
                                slowperiod=slowperiod, signalperiod=signalperiod)
         return macd
@@ -124,15 +154,33 @@ class IndicatorRegistry:
     @staticmethod
     def generate_random_params(param_names):
         params = {}
+        ranges = config.get("trading.indicators.parameters.ranges", {})
+        
         for param in param_names:
             if param == "timeperiod":
-                params[param] = np.random.randint(5, 50)
+                range_config = ranges.get("timeperiod", {})
+                params[param] = np.random.randint(
+                    range_config.get("min", 5),
+                    range_config.get("max", 50)
+                )
             elif param == "fastperiod" or param == "fastk_period":
-                params[param] = np.random.randint(5, 20)
+                range_config = ranges.get("fast_period", {})
+                params[param] = np.random.randint(
+                    range_config.get("min", 5),
+                    range_config.get("max", 20)
+                )
             elif param == "slowperiod" or param == "slowk_period":
-                params[param] = np.random.randint(15, 40)
+                range_config = ranges.get("slow_period", {})
+                params[param] = np.random.randint(
+                    range_config.get("min", 15),
+                    range_config.get("max", 40)
+                )
             elif param == "signalperiod" or param == "slowd_period":
-                params[param] = np.random.randint(5, 15)
+                range_config = ranges.get("signal_period", {})
+                params[param] = np.random.randint(
+                    range_config.get("min", 5),
+                    range_config.get("max", 15)
+                )
         return params
 
     @staticmethod

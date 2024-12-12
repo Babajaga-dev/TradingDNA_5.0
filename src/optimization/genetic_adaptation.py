@@ -6,13 +6,48 @@ logger = logging.getLogger(__name__)
 
 class AdaptationManager:
     def __init__(self, config):
-        # Parametri anti-plateau
+        # Parametri base
         self.mutation_rate = config.get("genetic.mutation_rate", 0.45)
         self.mutation_decay = config.get("genetic.mutation_decay", 0.995)
         self.diversity_threshold = config.get("genetic.diversity_threshold", 0.25)
         self.restart_threshold = config.get("genetic.restart_threshold", 8)
         self.improvement_threshold = config.get("genetic.improvement_threshold", 0.002)
         self.restart_mutation_multiplier = config.get("genetic.restart_mutation_multiplier", 2.2)
+        
+        # Parametri adaptive mutation
+        adaptive_params = config.get("genetic.adaptive_mutation", {})
+        self.plateau_max_factor = adaptive_params.get("plateau_max_factor", 2.0)
+        self.plateau_base_factor = adaptive_params.get("plateau_base_factor", 1.0)
+        self.improvement_min_factor = adaptive_params.get("improvement_min_factor", 0.5)
+        self.improvement_base_factor = adaptive_params.get("improvement_base_factor", 1.0)
+        self.fitness_std_multiplier = adaptive_params.get("fitness_std_multiplier", 2.0)
+        
+        # Validazione parametri
+        self._validate_parameters()
+        
+        logger.info("AdaptationManager inizializzato con parametri:")
+        logger.info(f"Plateau factors - Max: {self.plateau_max_factor}, Base: {self.plateau_base_factor}")
+        logger.info(f"Improvement factors - Min: {self.improvement_min_factor}, Base: {self.improvement_base_factor}")
+        logger.info(f"Fitness std multiplier: {self.fitness_std_multiplier}")
+
+    def _validate_parameters(self):
+        """Valida e corregge i parametri se necessario"""
+        # Plateau factors
+        if self.plateau_max_factor <= self.plateau_base_factor:
+            logger.warning("plateau_max_factor <= plateau_base_factor, correzione automatica")
+            self.plateau_max_factor = 2.0
+            self.plateau_base_factor = 1.0
+            
+        # Improvement factors
+        if self.improvement_min_factor >= self.improvement_base_factor:
+            logger.warning("improvement_min_factor >= improvement_base_factor, correzione automatica")
+            self.improvement_min_factor = 0.5
+            self.improvement_base_factor = 1.0
+            
+        # Fitness std multiplier
+        if self.fitness_std_multiplier <= 0:
+            logger.warning("fitness_std_multiplier <= 0, correzione automatica")
+            self.fitness_std_multiplier = 2.0
 
     def calculate_plateau_length(self, generation_stats: List[Dict]) -> int:
         """
@@ -63,24 +98,43 @@ class AdaptationManager:
         try:
             base_rate = self.mutation_rate
             
-            # Aumenta mutazione se in plateau
+            # Aumenta mutazione se in plateau usando i fattori configurati
             if plateau_length > 0:
-                plateau_factor = min(2.0, 1.0 + (plateau_length / self.restart_threshold))
-                base_rate *= plateau_factor
+                plateau_factor = self.plateau_base_factor + (
+                    (self.plateau_max_factor - self.plateau_base_factor) * 
+                    (plateau_length / self.restart_threshold)
+                )
+                base_rate *= min(self.plateau_max_factor, plateau_factor)
+                logger.debug(f"Plateau adjustment: {plateau_factor:.3f}")
             
-            # Adatta in base al miglioramento
+            # Adatta in base al miglioramento usando i fattori configurati
             if len(generation_stats) > 1:
                 last_improvement = (generation_stats[-1]['best_fitness'] - 
                                   generation_stats[-2]['best_fitness'])
                 if last_improvement > 0:
-                    improvement_factor = max(0.5, 1.0 - (last_improvement * 2))
-                    base_rate *= improvement_factor
+                    improvement_factor = self.improvement_base_factor - (
+                        (self.improvement_base_factor - self.improvement_min_factor) * 
+                        (last_improvement * 2)
+                    )
+                    base_rate *= max(self.improvement_min_factor, improvement_factor)
+                    logger.debug(f"Improvement adjustment: {improvement_factor:.3f}")
+            
+            # Adatta in base alla deviazione standard del fitness
+            if len(generation_stats) > 1:
+                fitness_values = [stat['best_fitness'] for stat in generation_stats[-5:]]
+                fitness_std = np.std(fitness_values)
+                if fitness_std > 0:
+                    std_factor = min(2.0, 1.0 + (fitness_std * self.fitness_std_multiplier))
+                    base_rate *= std_factor
+                    logger.debug(f"Fitness std adjustment: {std_factor:.3f}")
             
             # Applica decay nel tempo
             generation_decay = self.mutation_decay ** generation
             base_rate *= generation_decay
             
-            return min(0.8, max(0.1, base_rate))
+            final_rate = min(0.8, max(0.1, base_rate))
+            logger.debug(f"Final mutation rate: {final_rate:.3f}")
+            return final_rate
             
         except Exception as e:
             logger.error(f"Error calculating adaptive mutation rate: {e}")
@@ -122,7 +176,7 @@ class AdaptationManager:
             needs_restart = (
                 best_improvement < self.improvement_threshold and
                 avg_improvement < self.improvement_threshold and
-                avg_fitness_std < self.improvement_threshold * 2 and
+                avg_fitness_std < self.improvement_threshold * self.fitness_std_multiplier and
                 current_diversity < self.diversity_threshold
             )
             

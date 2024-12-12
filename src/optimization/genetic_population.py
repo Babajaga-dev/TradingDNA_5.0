@@ -10,11 +10,49 @@ logger = logging.getLogger(__name__)
 class PopulationManager:
     """Gestisce la popolazione genetica"""
     
-    def __init__(self, population_size: int, mutation_rate: float, elite_fraction: float = 0.1):
+    def __init__(self, population_size: int, mutation_rate: float, elite_fraction: float = 0.1, config: Dict = None):
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.population: List[TradingGene] = []
         self.elite_size = max(1, int(population_size * elite_fraction))
+        
+        # Parametri diversity dal config
+        diversity_params = config.get("genetic.diversity", {}) if config else {}
+        self.top_performer_threshold = diversity_params.get("top_performer_threshold", 0.8)
+        self.performance_bonus_limit = diversity_params.get("performance_bonus_limit", 0.1)
+        self.performance_bonus_multiplier = diversity_params.get("performance_bonus_multiplier", 0.2)
+        self.injection_fraction = diversity_params.get("injection_fraction", 0.2)
+        
+        # Validazione parametri
+        self._validate_parameters()
+        
+        logger.info("PopulationManager inizializzato con parametri diversity:")
+        logger.info(f"Top performer threshold: {self.top_performer_threshold}")
+        logger.info(f"Performance bonus limit: {self.performance_bonus_limit}")
+        logger.info(f"Performance bonus multiplier: {self.performance_bonus_multiplier}")
+        logger.info(f"Injection fraction: {self.injection_fraction}")
+
+    def _validate_parameters(self):
+        """Valida e corregge i parametri se necessario"""
+        # Top performer threshold
+        if not 0 < self.top_performer_threshold < 1:
+            logger.warning(f"Invalid top_performer_threshold: {self.top_performer_threshold}, using default 0.8")
+            self.top_performer_threshold = 0.8
+            
+        # Performance bonus limit
+        if not 0 < self.performance_bonus_limit < 1:
+            logger.warning(f"Invalid performance_bonus_limit: {self.performance_bonus_limit}, using default 0.1")
+            self.performance_bonus_limit = 0.1
+            
+        # Performance bonus multiplier
+        if self.performance_bonus_multiplier <= 0:
+            logger.warning(f"Invalid performance_bonus_multiplier: {self.performance_bonus_multiplier}, using default 0.2")
+            self.performance_bonus_multiplier = 0.2
+            
+        # Injection fraction
+        if not 0 < self.injection_fraction < 1:
+            logger.warning(f"Invalid injection_fraction: {self.injection_fraction}, using default 0.2")
+            self.injection_fraction = 0.2
 
     def initialize_population(self) -> List[TradingGene]:
         """
@@ -123,13 +161,19 @@ class PopulationManager:
             unique_signatures = set(weighted_signatures)
             simple_diversity = len(unique_signatures) / total_genes
             
+            # Calcola performance bonus usando i parametri configurati
             performance_bonus = 0.0
             if fitness_scores:
-                top_performers = len([s for s in fitness_scores if s > (max_fitness * 0.8)])
-                performance_bonus = min(0.1, (top_performers / total_genes) * 0.2)
+                top_performers = len([s for s in fitness_scores if s > (max_fitness * self.top_performer_threshold)])
+                performance_bonus = min(
+                    self.performance_bonus_limit,
+                    (top_performers / total_genes) * self.performance_bonus_multiplier
+                )
+                
+                logger.debug(f"Diversity calculation - Simple: {simple_diversity:.3f}, "
+                           f"Performance bonus: {performance_bonus:.3f}")
             
             final_diversity = simple_diversity + performance_bonus
-            
             return min(1.0, final_diversity)
             
         except Exception as e:
@@ -139,7 +183,12 @@ class PopulationManager:
     def inject_diversity(self) -> None:
         """Inietta diversità nella popolazione"""
         try:
-            num_random = int(len(self.population) * 0.2)
+            num_random = int(len(self.population) * self.injection_fraction)
+            if num_random < 1:
+                logger.warning("Injection fraction too small, using minimum value")
+                num_random = 1
+                
+            logger.info(f"Injecting {num_random} new random individuals")
             self.population[-num_random:] = [TradingGene(random_init=True) 
                                            for _ in range(num_random)]
         except Exception as e:
@@ -183,6 +232,7 @@ class PopulationManager:
                 new_population.append(TradingGene(random_init=True))
             
             self.population = new_population
+            logger.info(f"Population restart completed with {len(new_population)} individuals")
             
         except Exception as e:
             logger.error(f"Error performing restart: {e}")
