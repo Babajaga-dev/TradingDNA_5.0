@@ -77,6 +77,57 @@ class TorchDeviceManager:
                 compute_capability=None
             )]
 
+    def _validate_compute_capability(self, device_cc: Tuple[int, int], required_cc: str) -> bool:
+        """
+        Valida che la compute capability del dispositivo soddisfi i requisiti
+        
+        Args:
+            device_cc: Compute capability del dispositivo (major, minor)
+            required_cc: Compute capability richiesta (formato "major.minor")
+            
+        Returns:
+            True se la compute capability è compatibile
+        """
+        try:
+            req_major, req_minor = map(int, required_cc.split("."))
+            dev_major, dev_minor = device_cc
+            
+            if dev_major > req_major:
+                return True
+            elif dev_major == req_major:
+                return dev_minor >= req_minor
+            return False
+        except:
+            logger.warning(f"Invalid compute capability format: {required_cc}")
+            return True
+
+    def _apply_optimization_level(self, level: int) -> None:
+        """
+        Applica il livello di ottimizzazione CUDA
+        
+        Args:
+            level: Livello di ottimizzazione (0-3)
+        """
+        try:
+            if not 0 <= level <= 3:
+                logger.warning(f"Invalid optimization level: {level}. Using default (3)")
+                level = 3
+                
+            if level >= 1:
+                torch.backends.cudnn.enabled = True
+            if level >= 2:
+                torch.backends.cudnn.benchmark = True
+            if level == 3:
+                # Abilita ottimizzazioni aggressive
+                if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                    torch.backends.cudnn.allow_tf32 = True
+                if hasattr(torch, 'set_float32_matmul_precision'):
+                    torch.set_float32_matmul_precision('high')
+                    
+            logger.info(f"Applied CUDA optimization level: {level}")
+        except Exception as e:
+            logger.error(f"Error applying optimization level: {e}")
+
     def get_best_device(self, config) -> torch.device:
         """
         Seleziona il miglior dispositivo disponibile
@@ -91,11 +142,22 @@ class TorchDeviceManager:
             use_gpu = config.get("genetic.optimizer.use_gpu", False)
             
             if use_gpu and len([d for d in self.devices if d.device_type == "cuda"]) > 0:
+                # Verifica compute capability richiesta
+                required_cc = config.get("genetic.optimizer.cuda_config.compute_capability")
+                cuda_devices = [d for d in self.devices if d.device_type == "cuda"]
+                
+                if required_cc:
+                    cuda_devices = [
+                        d for d in cuda_devices 
+                        if self._validate_compute_capability(d.compute_capability, required_cc)
+                    ]
+                    
+                if not cuda_devices:
+                    logger.warning("No GPU meets compute capability requirements, falling back to CPU")
+                    return torch.device("cpu")
+                
                 # Seleziona GPU con più memoria libera
-                best_gpu = max(
-                    [d for d in self.devices if d.device_type == "cuda"],
-                    key=lambda x: x.memory_free
-                )
+                best_gpu = max(cuda_devices, key=lambda x: x.memory_free)
                 logger.info(f"Selected GPU device: {best_gpu.name}")
                 return torch.device(f"cuda:{best_gpu.device_index}")
             else:
@@ -121,6 +183,27 @@ class TorchDeviceManager:
                 logger.info(f"Set CPU threads to {torch_threads}")
         else:
             # Configura CUDA
-            torch.backends.cudnn.benchmark = config.get("genetic.optimizer.cuda_config.benchmark", True)
-            torch.backends.cudnn.deterministic = config.get("genetic.optimizer.cuda_config.deterministic", False)
-            logger.info("CUDA configuration applied")
+            cuda_config = config.get("genetic.optimizer.cuda_config", {})
+            
+            # Applica livello ottimizzazione
+            opt_level = cuda_config.get("optimization_level", 3)
+            self._apply_optimization_level(opt_level)
+            
+            # Configura TF32
+            if hasattr(torch.backends.cuda, 'allow_tf32'):
+                allow_tf32 = cuda_config.get("allow_tf32", True)
+                torch.backends.cuda.allow_tf32 = allow_tf32
+                torch.backends.cudnn.allow_tf32 = allow_tf32
+                logger.info(f"TF32 support: {allow_tf32}")
+            
+            # Configura benchmark e deterministic
+            torch.backends.cudnn.benchmark = cuda_config.get("benchmark", True)
+            torch.backends.cudnn.deterministic = cuda_config.get("deterministic", False)
+            
+            # Log configurazione finale
+            logger.info("CUDA configuration:")
+            logger.info(f"- Optimization level: {opt_level}")
+            logger.info(f"- Benchmark mode: {torch.backends.cudnn.benchmark}")
+            logger.info(f"- Deterministic mode: {torch.backends.cudnn.deterministic}")
+            if hasattr(torch.backends.cuda, 'allow_tf32'):
+                logger.info(f"- TF32 enabled: {torch.backends.cuda.allow_tf32}")

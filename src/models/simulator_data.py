@@ -6,9 +6,11 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
 import traceback
+import os
 
 from .common import TimeFrame
 from .genes.base import TradingGene
+from ..utils.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,79 @@ class MarketDataManager:
         self.device_manager = device_manager
         self.market_state: Optional[MarketState] = None
         self.indicators_cache: Dict[str, torch.Tensor] = {}
+        
+        # Carica dati dal file se specificato
+        data_file = config.get("simulator.data_file")
+        if data_file:
+            self._load_from_file(data_file)
+
+    def _load_from_file(self, filename: str) -> None:
+        """
+        Carica i dati di mercato dal file specificato
+        
+        Args:
+            filename: Nome del file da caricare
+        """
+        try:
+            # Costruisci il path completo
+            data_dir = "data"
+            file_path = os.path.join(data_dir, filename)
+            
+            if not os.path.exists(file_path):
+                logger.error(f"File non trovato: {file_path}")
+                return
+                
+            logger.info(f"Caricamento dati da {file_path}")
+            
+            # Carica il file CSV
+            data = pd.read_csv(file_path)
+            
+            # Verifica e rinomina colonne se necessario
+            column_mapping = {
+                'timestamp': 'timestamp',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'volume': 'volume'
+            }
+            
+            # Rinomina colonne se hanno nomi diversi
+            for std_name, possible_names in {
+                'timestamp': ['timestamp', 'time', 'date'],
+                'open': ['open', 'Open'],
+                'high': ['high', 'High'],
+                'low': ['low', 'Low'],
+                'close': ['close', 'Close'],
+                'volume': ['volume', 'Volume']
+            }.items():
+                for col_name in possible_names:
+                    if col_name in data.columns:
+                        data = data.rename(columns={col_name: std_name})
+                        break
+            
+            # Verifica colonne necessarie
+            required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            if not all(col in data.columns for col in required_columns):
+                missing = [col for col in required_columns if col not in data.columns]
+                raise ValueError(f"Colonne mancanti nel file: {missing}")
+            
+            # Converti timestamp se necessario
+            if not pd.api.types.is_datetime64_any_dtype(data['timestamp']):
+                data['timestamp'] = pd.to_datetime(data['timestamp'])
+            
+            # Ordina per timestamp
+            data = data.sort_values('timestamp')
+            
+            # Aggiungi i dati
+            self.add_market_data(TimeFrame.M1, data)
+            
+            logger.info(f"Caricati {len(data)} candles da {filename}")
+            
+        except Exception as e:
+            logger.error(f"Errore nel caricamento del file {filename}: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
     def add_market_data(self, timeframe: TimeFrame, data: pd.DataFrame) -> None:
         """

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class Config:
     _instance = None
     _config = None
+    _config_path = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -16,11 +17,11 @@ class Config:
         return cls._instance
 
     def __init__(self):
-        if self._config is None:
-            self.load_config()
+        pass  # Rimuovo il caricamento automatico
 
     def load_config(self, config_path: str = "config.yaml"):
         try:
+            self._config_path = config_path
             config_file = Path(config_path)
             if not config_file.exists():
                 raise FileNotFoundError(f"File di configurazione non trovato: {config_path}")
@@ -37,6 +38,9 @@ class Config:
             raise
 
     def get(self, path: str, default: Any = None) -> Any:
+        if self._config is None:
+            raise RuntimeError("Configurazione non ancora caricata. Chiamare load_config() prima di get()")
+            
         try:
             value = self._config
             for key in path.split('.'):
@@ -47,7 +51,12 @@ class Config:
             return default
 
     def get_all(self) -> Dict:
+        if self._config is None:
+            raise RuntimeError("Configurazione non ancora caricata. Chiamare load_config() prima di get_all()")
         return self._config
+
+    def get_config_path(self) -> str:
+        return self._config_path
 
 # Istanza singleton
 config = Config()

@@ -10,16 +10,48 @@ logger = logging.getLogger(__name__)
 class SelectionManager:
     """Gestisce la selezione e riproduzione della popolazione"""
     
-    def __init__(self, tournament_size: int, mutation_rate: float):
+    def __init__(self, tournament_size: int, mutation_rate: float, config: Dict = None):
         """
         Inizializza il selection manager.
         
         Args:
             tournament_size: Dimensione del torneo per la selezione
             mutation_rate: Tasso base di mutazione
+            config: Configurazione del sistema
         """
         self.tournament_size = tournament_size
         self.mutation_rate = mutation_rate
+        
+        # Parametri di riproduzione dal config
+        reproduction_params = config.get("genetic.reproduction", {}) if config else {}
+        self.crossover_probability = reproduction_params.get("crossover_probability", 0.85)
+        self.strong_mutation_multiplier = reproduction_params.get("strong_mutation_multiplier", 1.5)
+        self.max_attempts_multiplier = reproduction_params.get("max_attempts_multiplier", 2.0)
+        
+        # Validazione parametri
+        self._validate_parameters()
+        
+        logger.info("SelectionManager inizializzato con parametri:")
+        logger.info(f"Crossover probability: {self.crossover_probability}")
+        logger.info(f"Strong mutation multiplier: {self.strong_mutation_multiplier}")
+        logger.info(f"Max attempts multiplier: {self.max_attempts_multiplier}")
+
+    def _validate_parameters(self):
+        """Valida e corregge i parametri se necessario"""
+        # Crossover probability
+        if not 0 <= self.crossover_probability <= 1:
+            logger.warning(f"Invalid crossover_probability: {self.crossover_probability}, using default 0.85")
+            self.crossover_probability = 0.85
+            
+        # Strong mutation multiplier
+        if self.strong_mutation_multiplier <= 1:
+            logger.warning(f"Invalid strong_mutation_multiplier: {self.strong_mutation_multiplier}, using default 1.5")
+            self.strong_mutation_multiplier = 1.5
+            
+        # Max attempts multiplier
+        if self.max_attempts_multiplier < 1:
+            logger.warning(f"Invalid max_attempts_multiplier: {self.max_attempts_multiplier}, using default 2.0")
+            self.max_attempts_multiplier = 2.0
 
     def _get_gene_signature(self, gene: TradingGene) -> Tuple:
         """
@@ -157,15 +189,15 @@ class SelectionManager:
 
             # Genera nuova popolazione
             attempts = 0
-            max_attempts = population_size * 2
+            max_attempts = int(population_size * self.max_attempts_multiplier)
 
             while len(new_population) < population_size and attempts < max_attempts:
                 try:
                     # Inizializza child esplicitamente come None
                     child = None
                     
-                    # Crossover (85% probabilità)
-                    if np.random.random() < 0.85:
+                    # Crossover con probabilità configurata
+                    if np.random.random() < self.crossover_probability:
                         parent1 = self.tournament_selection(population, normalized_scores)
                         parent2 = self.tournament_selection(population, normalized_scores)
                         
@@ -174,13 +206,13 @@ class SelectionManager:
                             if child is not None:
                                 child.mutate(mutation_rate)
                     
-                    # Strong mutation (15% probabilità)
+                    # Strong mutation
                     else:
                         parent = self.tournament_selection(population, normalized_scores)
                         if parent is not None:
                             child = deepcopy(parent)
                             if child is not None:
-                                child.mutate(mutation_rate * 1.5)
+                                child.mutate(mutation_rate * self.strong_mutation_multiplier)
 
                     # Aggiungi child se valido e unico
                     if child is not None:

@@ -1,5 +1,6 @@
 import logging
 import gc
+import numpy as np
 from typing import Optional, Tuple
 from datetime import datetime
 
@@ -42,6 +43,7 @@ class ParallelGeneticOptimizer:
         self.generation_stats = []
         self.best_gene = None
         self.best_fitness = float('-inf')
+        self.precalculated_data = None
 
         logger.info(f"Initialized genetic optimizer with {self.device_manager.num_gpus} devices")
         logger.info(f"Precision: {self.device_manager.precision}")
@@ -60,6 +62,9 @@ class ParallelGeneticOptimizer:
         try:
             logger.info("Starting enhanced genetic optimization")
             start_time = datetime.now()
+            
+            # Inizializza precalculated_data con gli indicatori precalcolati
+            self.precalculated_data = simulator.indicators_cache
             
             self.population_manager.initialize_population()
             
@@ -102,7 +107,7 @@ class ParallelGeneticOptimizer:
                     "generation": generation + 1,
                     "best_fitness": best_gen_fitness,
                     "avg_fitness": sum(fitness_scores) / len(fitness_scores) if fitness_scores else 0.0,
-                    "std_fitness": float(gc.std(fitness_scores)) if fitness_scores else 0.0,
+                    "std_fitness": float(np.std(fitness_scores)) if fitness_scores else 0.0,
                     "diversity": current_diversity,
                     "mutation_rate": current_mutation_rate,
                     "plateau_length": plateau_length,

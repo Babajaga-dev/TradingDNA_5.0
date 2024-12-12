@@ -53,6 +53,7 @@ def calculate_fitness(metrics: Dict[str, Any],
         profit_weights = weights.get("profit_score", {})
         quality_weights = weights.get("quality_score", {})
         final_weights = weights.get("final_weights", {})
+        penalties_config = weights.get("penalties", {})
         
         # Calcolo profit score
         profit_score = (
@@ -83,14 +84,23 @@ def calculate_fitness(metrics: Dict[str, Any],
         if gene_type in ensemble_weights:
             base_score *= ensemble_weights[gene_type]
         
-        # Applica penalità
+        # Applica penalità dai parametri di configurazione
         penalties = 1.0
-        if metrics["total_trades"] > 500:
-            penalties *= 0.8
-        if metrics["max_drawdown"] > 0.3:
-            penalties *= 0.7
-        if metrics["win_rate"] < 0.4:
-            penalties *= 0.9
+        
+        # Penalità max trades
+        max_trades_config = penalties_config.get("max_trades", {})
+        if metrics["total_trades"] > max_trades_config.get("limit", 500):
+            penalties *= max_trades_config.get("penalty", 0.8)
+            
+        # Penalità max drawdown
+        max_drawdown_config = penalties_config.get("max_drawdown", {})
+        if metrics["max_drawdown"] > max_drawdown_config.get("limit", 0.3):
+            penalties *= max_drawdown_config.get("penalty", 0.7)
+            
+        # Penalità min win rate
+        min_win_rate_config = penalties_config.get("min_win_rate", {})
+        if metrics["win_rate"] < min_win_rate_config.get("limit", 0.4):
+            penalties *= min_win_rate_config.get("penalty", 0.9)
         
         # Aggiungi diversity bonus se presente
         if "diversity_score" in metrics:

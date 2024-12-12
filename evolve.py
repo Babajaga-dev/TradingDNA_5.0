@@ -177,20 +177,24 @@ def generate_evolution_report(evolution_state: Dict, report_dir: Path) -> str:
         report.append(f"Lunghezza massima plateau: {history_analysis['plateaus']['max_plateau_length']}")
         
         # Parametri del miglior gene
-        report.append("\nPARAMETRI DEL MIGLIOR GENE:")
-        for key, value in evolution_state['best_gene'].dna.items():
-            report.append(f"{key}: {value}")
-        
-        # Metriche di performance del miglior gene
-        report.append("\nPERFORMANCE DEL MIGLIOR GENE:")
-        stats = evolution_state['stats']
-        report.append(f"Total trades: {stats['total_trades']}")
-        report.append(f"Win rate: {stats['win_rate']:.2%}")
-        report.append(f"Profit factor: {stats['profit_factor']:.2f}")
-        report.append(f"Sharpe ratio: {stats['sharpe_ratio']:.2f}")
-        report.append(f"Max drawdown: {stats['max_drawdown']:.2%}")
-        report.append(f"Total PnL: ${stats['total_pnl']:.2f}")
-        report.append(f"Final capital: ${stats['final_capital']:.2f}")
+        if evolution_state['best_gene'] is not None:
+            report.append("\nPARAMETRI DEL MIGLIOR GENE:")
+            for key, value in evolution_state['best_gene'].dna.items():
+                report.append(f"{key}: {value}")
+            
+            # Metriche di performance del miglior gene
+            report.append("\nPERFORMANCE DEL MIGLIOR GENE:")
+            stats = evolution_state['stats']
+            report.append(f"Total trades: {stats['total_trades']}")
+            report.append(f"Win rate: {stats['win_rate']:.2%}")
+            report.append(f"Profit factor: {stats['profit_factor']:.2f}")
+            report.append(f"Sharpe ratio: {stats['sharpe_ratio']:.2f}")
+            report.append(f"Max drawdown: {stats['max_drawdown']:.2%}")
+            report.append(f"Total PnL: ${stats['total_pnl']:.2f}")
+            report.append(f"Final capital: ${stats['final_capital']:.2f}")
+        else:
+            report.append("\nNESSUN GENE VALIDO TROVATO")
+            report.append("L'ottimizzazione non ha prodotto un gene valido.")
         
         report_content = '\n'.join(report)
         
@@ -282,6 +286,12 @@ def run_evolution(data_file: str,
         optimizer = ParallelGeneticOptimizer()
         best_gene, stats = optimizer.optimize(simulator)
         logger.info("Optimization completed")
+        
+        # Verifica se l'ottimizzazione ha avuto successo
+        if best_gene is None:
+            logger.error("Optimization failed to produce a valid gene")
+            print("\nERRORE: L'ottimizzazione non ha prodotto un gene valido")
+            return
         
         # Fai una simulazione finale con il miglior gene
         final_metrics = simulator.run_simulation_vectorized(

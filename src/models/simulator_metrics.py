@@ -3,12 +3,16 @@ import numpy as np
 import logging
 from typing import Dict, Any
 import traceback
+from ..utils.config import config
 
 logger = logging.getLogger(__name__)
 
 class MetricsCalculator:
     def __init__(self, initial_capital: float):
         self.initial_capital = initial_capital
+        # Carica parametri da config con conversione esplicita a float
+        self.returns_limit = float(config.get("simulator.metrics.returns_limit", 10.0))
+        self.min_equity = float(config.get("simulator.metrics.min_equity", 1e-6))
 
     def calculate_metrics(self, pnl: torch.Tensor, equity: torch.Tensor) -> Dict[str, Any]:
         """
@@ -24,6 +28,10 @@ class MetricsCalculator:
         try:
             # Converti a numpy con controlli di validità
             equity_np = equity.detach().cpu().numpy()
+            
+            # Applica min_equity
+            equity_np = np.where(equity_np < self.min_equity, self.min_equity, equity_np)
+            
             if not np.all(np.isfinite(equity_np)):
                 logger.warning("Found non-finite values in equity array")
                 equity_np = np.nan_to_num(equity_np, nan=self.initial_capital)
@@ -75,7 +83,7 @@ class MetricsCalculator:
         """Calcola il drawdown massimo con gestione sicura"""
         try:
             peaks = np.maximum.accumulate(equity)
-            min_peak_value = np.finfo(np.float64).eps
+            min_peak_value = self.min_equity
             peaks = np.where(peaks < min_peak_value, min_peak_value, peaks)
             
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -92,20 +100,20 @@ class MetricsCalculator:
         """Calcola Sharpe ratio con gestione sicura"""
         try:
             equity_shifted = equity[:-1].copy()
-            min_equity = np.finfo(np.float64).eps
-            equity_shifted = np.where(equity_shifted < min_equity, min_equity, equity_shifted)
+            equity_shifted = np.where(equity_shifted < self.min_equity, self.min_equity, equity_shifted)
             
             with np.errstate(divide='ignore', invalid='ignore'):
                 raw_returns = np.diff(equity) / equity_shifted
                 returns = np.where(np.isfinite(raw_returns), raw_returns, 0)
             
-            # Rimuovi outliers
-            returns = returns[np.abs(returns) < 10]  # Limita a ±1000%
+            # Applica returns_limit
+            returns = np.clip(returns, -self.returns_limit, self.returns_limit)
             
             if len(returns) > 0:
                 returns_std = np.std(returns)
                 if returns_std > 0:
-                    return float(np.sqrt(252) * (np.mean(returns) / returns_std))
+                    annualization_factor = float(config.get("simulator.metrics.annualization_factor", 252))
+                    return float(np.sqrt(annualization_factor) * (np.mean(returns) / returns_std))
             
             return 0.0
             
