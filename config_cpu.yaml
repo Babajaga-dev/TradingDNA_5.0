@@ -118,7 +118,7 @@ genetic:
 
   optimizer:
     gpu_backend: "auto"  # auto, cuda, arc, cpu
-    use_gpu: true
+    use_gpu: false
     torch_threads: 8
     device_config:
       cuda:

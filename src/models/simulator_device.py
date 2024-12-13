@@ -10,117 +10,183 @@ logger = logging.getLogger(__name__)
 
 class SimulatorDevice:
     def __init__(self, config):
+        self.config = config
+        self.gpu_backend = config.get("genetic.optimizer.gpu_backend", "auto")
         self.use_gpu = config.get("genetic.optimizer.use_gpu", False)
         self.element_size_bytes = config.get("simulator.metrics.element_size_bytes", 32)
-        self.setup_device(config)
-        self.setup_memory_config(config)
-        self.setup_parallel_config(config)
-        self.setup_batch_config(config)
+        self.setup_device()
+        self.setup_memory_config()
+        self.setup_parallel_config()
+        self.setup_batch_config()
         
-        logger.info(f"SimulatorDevice initialized with GPU: {self.use_gpu}")
+        logger.info(f"SimulatorDevice initialized with backend: {self.gpu_backend}")
         if self.use_gpu:
             logger.info(f"Using device: {torch.cuda.get_device_name(0)}")
             logger.info(f"Mixed precision: {self.mixed_precision}")
             logger.info(f"Memory reserve: {self.memory_reserve}MB")
             logger.info(f"Element size: {self.element_size_bytes} bytes")
 
-    def setup_device(self, config):
-        """Setup del dispositivo (GPU/CPU)"""
-        if self.use_gpu and torch.cuda.is_available():
-            try:
-                torch.cuda.set_device(0)
-                self.device = torch.device("cuda")
-                self.num_gpus = torch.cuda.device_count()
-                logger.info(f"Using {self.num_gpus} CUDA devices")
-                
-                # Configura precisione
-                self.precision = config.get("genetic.optimizer.device_config.precision", "float32")
-                self.dtype = torch.float16 if self.precision == "float16" else torch.float32
-                
-                # Configura memoria
-                self.memory_reserve = config.get("genetic.optimizer.device_config.memory_reserve", 2048)
-                self.max_batch_size = config.get("genetic.optimizer.device_config.max_batch_size", 1024)
-                
-                # Mixed precision
-                self.mixed_precision = config.get("genetic.optimizer.device_config.mixed_precision", False)
-                if self.mixed_precision:
-                    self.scaler = torch.amp.GradScaler('cuda')
+    def detect_gpu_backends(self) -> Dict[str, bool]:
+        """Rileva i backend GPU disponibili"""
+        backends = {
+            'cuda': False,
+            'arc': False
+        }
+        
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                if 'NVIDIA' in props.name:
+                    backends['cuda'] = True
+                if 'Intel' in props.name and 'Arc' in props.name:
+                    backends['arc'] = True
                     
-                # Setup CUDA streams per overlap transfers
-                if self.parallel_config["async_loading"]:
-                    try:
-                        num_streams = self.parallel_config["cuda_streams"]
-                        self.streams = [torch.cuda.Stream() for _ in range(num_streams)]
-                        logger.info(f"Created {num_streams} CUDA streams")
-                    except Exception as e:
-                        logger.error(f"Error creating CUDA streams: {str(e)}")
-                        self.streams = []
-                    
-                # Pin memory se richiesto
-                if self.parallel_config["pin_memory"]:
-                    torch.cuda.set_rng_state(torch.cuda.get_rng_state())
-                    
-            except Exception as e:
-                logger.error(f"Error setting up CUDA: {str(e)}")
-                self._setup_cpu_fallback(config)
-        else:
-            self._setup_cpu_fallback(config)
+        return backends
 
-    def _setup_cpu_fallback(self, config):
+    def setup_device(self):
+        """Setup del dispositivo (GPU/CPU)"""
+        if not self.use_gpu:
+            self._setup_cpu_fallback()
+            return
+
+        backends = self.detect_gpu_backends()
+        
+        # Selezione automatica backend
+        if self.gpu_backend == "auto":
+            if backends['arc']:
+                self.gpu_backend = "arc"
+            elif backends['cuda']:
+                self.gpu_backend = "cuda"
+            else:
+                self.gpu_backend = "cpu"
+                self._setup_cpu_fallback()
+                return
+
+        # Setup backend specifico
+        try:
+            if self.gpu_backend == "arc" and backends['arc']:
+                self._setup_arc_config()
+            elif self.gpu_backend == "cuda" and backends['cuda']:
+                self._setup_cuda_config()
+            else:
+                logger.warning(f"Requested backend {self.gpu_backend} not available")
+                self._setup_cpu_fallback()
+                
+        except Exception as e:
+            logger.error(f"Error setting up {self.gpu_backend}: {str(e)}")
+            self._setup_cpu_fallback()
+
+    def _setup_arc_config(self):
+        """Setup configurazione Intel Arc"""
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda")
+        
+        arc_config = self.config.get("genetic.optimizer.device_config.arc", {})
+        
+        # Configurazioni ottimizzate per Arc
+        self.dtype = torch.float16  # Arc preferisce FP16
+        self.memory_reserve = arc_config.get("memory_reserve", 1024)
+        self.max_batch_size = arc_config.get("max_batch_size", 65536)
+        self.mixed_precision = arc_config.get("mixed_precision", True)
+        
+        # Mixed precision setup
+        if self.mixed_precision:
+            self.scaler = torch.amp.GradScaler()
+            
+        # Configurazione stream
+        num_streams = min(2, self.config.get("genetic.parallel_config.cuda_streams", 2))
+        self.streams = [torch.cuda.Stream() for _ in range(num_streams)]
+        
+        # Memory strategy
+        self.memory_strategy = arc_config.get("memory_strategy", {})
+        
+        logger.info("Intel Arc GPU configuration completed")
+
+    def _setup_cuda_config(self):
+        """Setup configurazione NVIDIA CUDA"""
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda")
+        
+        cuda_config = self.config.get("genetic.optimizer.device_config.cuda", {})
+        
+        # Configurazioni ottimizzate per CUDA
+        self.dtype = torch.float32
+        self.memory_reserve = cuda_config.get("memory_reserve", 2048)
+        self.max_batch_size = cuda_config.get("max_batch_size", 131072)
+        self.mixed_precision = cuda_config.get("mixed_precision", True)
+        
+        # Mixed precision setup
+        if self.mixed_precision:
+            self.scaler = torch.amp.GradScaler()
+            
+        # Configurazione CUDA
+        cuda_settings = self.config.get("genetic.optimizer.cuda_config", {})
+        torch.backends.cuda.matmul.allow_tf32 = cuda_settings.get("allow_tf32", True)
+        torch.backends.cudnn.benchmark = cuda_settings.get("benchmark", True)
+        torch.backends.cudnn.deterministic = cuda_settings.get("deterministic", False)
+        
+        # Stream configuration
+        num_streams = self.config.get("genetic.parallel_config.cuda_streams", 4)
+        self.streams = [torch.cuda.Stream() for _ in range(num_streams)]
+        
+        # Memory strategy
+        self.memory_strategy = cuda_config.get("memory_strategy", {})
+        
+        logger.info("NVIDIA CUDA configuration completed")
+
+    def _setup_cpu_fallback(self):
         """Setup CPU come fallback"""
         self.device = torch.device("cpu")
         self.dtype = torch.float32
-        self.max_batch_size = config.get("genetic.batch_size", 32)
-        logger.info("Using CPU device")
+        self.max_batch_size = self.config.get("genetic.batch_size", 32)
         self.mixed_precision = False
         self.streams = []
+        self.memory_strategy = {}
+        logger.info("Using CPU device (fallback)")
 
-    def setup_memory_config(self, config):
+    def setup_memory_config(self):
         """Setup configurazione memoria"""
         self.memory_config = {
-            "prealloc": config.get("genetic.memory_management.preallocation", True),
-            "cache_mode": config.get("genetic.memory_management.cache_mode", "all"),
-            "release_thresh": config.get("genetic.memory_management.release_threshold", 0.99),
-            "defrag_thresh": config.get("genetic.memory_management.defrag_threshold", 0.9),
-            "periodic_gc": config.get("genetic.memory_management.periodic_gc", False)
+            "prealloc": self.config.get("genetic.memory_management.preallocation", True),
+            "cache_mode": self.config.get("genetic.memory_management.cache_mode", "balanced"),
+            "release_thresh": self.config.get("genetic.memory_management.release_threshold", 0.8),
+            "defrag_thresh": self.config.get("genetic.memory_management.defrag_threshold", 0.6),
+            "periodic_gc": self.config.get("genetic.memory_management.periodic_gc", True),
+            "gc_interval": self.config.get("genetic.memory_management.gc_interval", 90)
         }
 
-    def setup_parallel_config(self, config):
+    def setup_parallel_config(self):
         """Setup configurazione parallela"""
         self.parallel_config = {
-            "chunk_size": config.get("genetic.parallel_config.chunk_size", 512),
-            "cuda_streams": config.get("genetic.parallel_config.cuda_streams", 4),
-            "async_loading": config.get("genetic.parallel_config.async_loading", True),
-            "pin_memory": config.get("genetic.parallel_config.pin_memory", True),
-            "persistent_workers": config.get("genetic.parallel_config.persistent_workers", True)
+            "chunk_size": self.config.get("genetic.parallel_config.chunk_size", 128),
+            "async_loading": self.config.get("genetic.parallel_config.async_loading", True),
+            "pin_memory": self.config.get("genetic.parallel_config.pin_memory", True),
+            "persistent_workers": self.config.get("genetic.parallel_config.persistent_workers", True)
         }
 
-    def setup_batch_config(self, config):
+    def setup_batch_config(self):
         """Setup configurazione batch processing"""
-        batch_config = config.get("genetic.batch_processing", {})
+        batch_config = self.config.get("genetic.batch_processing", {})
         
         self.batch_config = {
             "enabled": batch_config.get("enabled", True),
             "adaptive": batch_config.get("adaptive_batching", True),
             "min_size": batch_config.get("min_batch_size", 16384),
             "max_size": batch_config.get("max_batch_size", 65536),
-            "memory_limit": batch_config.get("memory_limit", 7900),
-            "prefetch": batch_config.get("prefetch_factor", 6),
+            "memory_limit": batch_config.get("memory_limit", 3072),
+            "prefetch": batch_config.get("prefetch_factor", 2),
             "overlap": batch_config.get("overlap_transfers", True)
         }
         
-        # Validazione parametri
         self._validate_batch_config()
         self._log_batch_config()
 
     def _validate_batch_config(self):
         """Valida i parametri di batch processing"""
-        # Validazione min/max size
         if self.batch_config["min_size"] > self.batch_config["max_size"]:
             logger.warning("min_batch_size > max_batch_size, correggendo...")
             self.batch_config["min_size"] = min(16384, self.batch_config["max_size"])
             
-        # Validazione prefetch_factor
         if self.batch_config["prefetch"] < 1:
             logger.warning("prefetch_factor < 1, impostando a 2")
             self.batch_config["prefetch"] = 2
@@ -128,7 +194,6 @@ class SimulatorDevice:
             logger.warning("prefetch_factor troppo alto, limitando a 10")
             self.batch_config["prefetch"] = 10
             
-        # Validazione memory_limit
         if self.batch_config["memory_limit"] < 1000:
             logger.warning("memory_limit troppo basso, impostando a 1000MB")
             self.batch_config["memory_limit"] = 1000
@@ -159,31 +224,28 @@ class SimulatorDevice:
             memory_allocated = torch.cuda.memory_allocated() / 1024**3
             memory_reserved = torch.cuda.memory_reserved() / 1024**3
             
-            if memory_allocated > self.memory_config["release_thresh"] * memory_reserved:
+            # Gestione memoria basata sulla strategia del backend
+            if self.memory_strategy.get("preallocate", False):
+                prealloc_thresh = self.memory_strategy.get("prealloc_threshold", 0.4)
+                if memory_allocated < prealloc_thresh * memory_reserved:
+                    torch.cuda.empty_cache()
+                    
+            # Gestione cache
+            empty_cache_thresh = self.memory_strategy.get("empty_cache_threshold", 0.8)
+            if memory_allocated > empty_cache_thresh * memory_reserved:
                 torch.cuda.empty_cache()
                 
-            if memory_allocated > self.memory_config["defrag_thresh"] * memory_reserved:
-                if self.memory_config["periodic_gc"]:
+            # Garbage collection
+            if self.memory_config["periodic_gc"]:
+                force_release_thresh = self.memory_strategy.get("force_release_threshold", 0.9)
+                if memory_allocated > force_release_thresh * memory_reserved:
                     gc.collect()
-                    
-            if self.memory_config["prealloc"]:
-                if memory_reserved < self.batch_config["memory_limit"]:
-                    torch.cuda.empty_cache()
                     
         except Exception as e:
             logger.error(f"Error in memory management: {str(e)}")
 
     def get_optimal_batch_size(self, data_size: int) -> int:
-        """
-        Determina la dimensione ottimale del batch in base alla configurazione
-        e alle risorse disponibili
-        
-        Args:
-            data_size: Dimensione dei dati da processare
-            
-        Returns:
-            Dimensione ottimale del batch
-        """
+        """Determina la dimensione ottimale del batch"""
         if not self.batch_config["enabled"] or not self.batch_config["adaptive"]:
             return self.batch_config["max_size"]
             
@@ -191,14 +253,14 @@ class SimulatorDevice:
             if self.use_gpu:
                 # Calcolo basato sulla memoria disponibile
                 memory_allocated = torch.cuda.memory_allocated() / 1024**3
-                memory_limit = self.batch_config["memory_limit"] / 1024  # Converti in GB
+                memory_limit = self.batch_config["memory_limit"] / 1024
                 available_memory = max(0, memory_limit - memory_allocated)
                 
-                # Considera il prefetch factor nel calcolo
+                # Considera il prefetch factor
                 prefetch_overhead = self.batch_config["prefetch"] / 10
                 available_memory *= (1 - prefetch_overhead)
                 
-                # Usa element_size_bytes per calcolo più preciso
+                # Calcolo dimensione batch
                 estimated_size = min(
                     self.batch_config["max_size"],
                     max(
@@ -207,9 +269,9 @@ class SimulatorDevice:
                     )
                 )
                 
-                # Aggiusta per overlap transfers se abilitato
+                # Aggiustamento per overlap
                 if self.batch_config["overlap"]:
-                    estimated_size = int(estimated_size * 0.9)  # Riserva 10% per overlap
+                    estimated_size = int(estimated_size * 0.9)
                     
                 return estimated_size
             else:
@@ -220,26 +282,16 @@ class SimulatorDevice:
             return self.batch_config["min_size"]
 
     def prefetch_data(self, data: torch.Tensor) -> torch.Tensor:
-        """
-        Prefetch dei dati in memoria device se possibile
-        
-        Args:
-            data: Tensor da prefetch
-            
-        Returns:
-            Tensor prefetchato
-        """
+        """Prefetch dei dati in memoria device"""
         try:
             if not self.batch_config["enabled"] or not self.batch_config["overlap"]:
                 return data.to(self.device)
                 
             if self.use_gpu:
-                # Usa stream dedicato per prefetch
                 stream = self.get_stream(0)
-                if stream is not None:
-                    with torch.cuda.stream(stream):
+                if isinstance(stream, torch.cuda.Stream):
+                    with stream:
                         prefetched = data.to(self.device, non_blocking=True)
-                    # Sincronizza solo se necessario
                     if self.batch_config["overlap"]:
                         stream.synchronize()
                     return prefetched
@@ -255,11 +307,9 @@ class SimulatorDevice:
         """Context manager per il batch processing"""
         try:
             if self.use_gpu and self.batch_config["enabled"]:
-                # Configura cache per batch processing
                 if self.batch_config["overlap"]:
                     torch.cuda.set_stream(self.get_stream(0))
                     
-                # Riserva memoria per prefetch se necessario
                 if self.batch_config["prefetch"] > 1:
                     torch.cuda.empty_cache()
                     
@@ -267,14 +317,12 @@ class SimulatorDevice:
             
         finally:
             if self.use_gpu:
-                # Ripristina stream principale
                 torch.cuda.set_stream(torch.cuda.default_stream())
-                # Sincronizza se necessario
                 if self.batch_config["overlap"]:
                     torch.cuda.synchronize()
 
     def to_tensor(self, data: any, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
-        """Converte i dati in tensor con gestione errori"""
+        """Converte i dati in tensor"""
         try:
             if isinstance(data, torch.Tensor):
                 tensor = data
@@ -285,6 +333,8 @@ class SimulatorDevice:
                 
             if dtype is not None:
                 tensor = tensor.to(dtype=dtype)
+            else:
+                tensor = tensor.to(dtype=self.dtype)
                 
             return tensor.to(device=self.device)
             
@@ -295,6 +345,17 @@ class SimulatorDevice:
     def cleanup(self):
         """Pulizia risorse device"""
         if self.use_gpu:
-            torch.cuda.empty_cache()
-            for stream in self.streams:
-                stream.synchronize()
+            try:
+                # Sincronizza e libera stream
+                for stream in self.streams:
+                    stream.synchronize()
+                
+                # Libera memoria
+                torch.cuda.empty_cache()
+                
+                # Reset device
+                if hasattr(self, 'scaler'):
+                    del self.scaler
+                    
+            except Exception as e:
+                logger.error(f"Error in cleanup: {str(e)}")
