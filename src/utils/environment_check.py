@@ -15,34 +15,93 @@ class EnvironmentChecker:
         self.checks_passed: List[str] = []
         self.checks_failed: List[str] = []
         self.warnings: List[str] = []
+        self.gpu_backends = self.check_gpu_backends()
+
+    def check_gpu_backends(self) -> Dict[str, bool]:
+        """Verifica i backend GPU disponibili"""
+        backends = {
+            'cuda': False,
+            'arc': False
+        }
+        
+        try:
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    props = torch.cuda.get_device_properties(i)
+                    if 'NVIDIA' in props.name:
+                        backends['cuda'] = True
+                        self.checks_passed.append(f"NVIDIA GPU detected: {props.name}")
+                    if 'Intel' in props.name and 'Arc' in props.name:
+                        backends['arc'] = True
+                        self.checks_passed.append(f"Intel Arc GPU detected: {props.name}")
+            
+            if not any(backends.values()):
+                self.warnings.append("No GPU backends detected")
+                
+        except Exception as e:
+            self.checks_failed.append(f"Error detecting GPU backends: {str(e)}")
+            
+        return backends
 
     def check_cuda_installation(self) -> bool:
         """Verifica l'installazione CUDA"""
-        try:
-            if not torch.cuda.is_available():
-                self.checks_failed.append("CUDA non disponibile")
-                return False
+        if not self.gpu_backends['cuda']:
+            return True  # Skip if no CUDA GPU
 
+        try:
             cuda_version = torch.version.cuda
             device_count = torch.cuda.device_count()
             
-            self.checks_passed.append(f"CUDA version: {cuda_version}")
-            self.checks_passed.append(f"GPU devices found: {device_count}")
+            cuda_devices = [i for i in range(device_count) 
+                          if 'NVIDIA' in torch.cuda.get_device_properties(i).name]
             
-            # Verifica ogni GPU
-            for i in range(device_count):
-                props = torch.cuda.get_device_properties(i)
-                mem_free, mem_total = torch.cuda.mem_get_info(i)
-                self.checks_passed.append(
-                    f"GPU {i}: {props.name} - "
-                    f"Compute: {props.major}.{props.minor} - "
-                    f"Memory: {mem_total/1024**3:.1f}GB"
-                )
+            if cuda_devices:
+                self.checks_passed.append(f"CUDA version: {cuda_version}")
+                self.checks_passed.append(f"CUDA devices found: {len(cuda_devices)}")
+                
+                for i in cuda_devices:
+                    props = torch.cuda.get_device_properties(i)
+                    mem_free, mem_total = torch.cuda.mem_get_info(i)
+                    self.checks_passed.append(
+                        f"CUDA GPU {i}: {props.name} - "
+                        f"Compute: {props.major}.{props.minor} - "
+                        f"Memory: {mem_total/1024**3:.1f}GB"
+                    )
             
             return True
             
         except Exception as e:
             self.checks_failed.append(f"Errore verifica CUDA: {str(e)}")
+            return False
+
+    def check_arc_installation(self) -> bool:
+        """Verifica l'installazione Intel Arc"""
+        if not self.gpu_backends['arc']:
+            return True  # Skip if no Arc GPU
+
+        try:
+            device_count = torch.cuda.device_count()
+            
+            arc_devices = [i for i in range(device_count) 
+                         if 'Intel' in torch.cuda.get_device_properties(i).name 
+                         and 'Arc' in torch.cuda.get_device_properties(i).name]
+            
+            if arc_devices:
+                self.checks_passed.append(f"Intel Arc devices found: {len(arc_devices)}")
+                
+                for i in arc_devices:
+                    props = torch.cuda.get_device_properties(i)
+                    mem_free, mem_total = torch.cuda.mem_get_info(i)
+                    self.checks_passed.append(
+                        f"Arc GPU {i}: {props.name} - "
+                        f"Compute: {props.major}.{props.minor} - "
+                        f"Memory: {mem_total/1024**3:.1f}GB"
+                    )
+            
+            return True
+            
+        except Exception as e:
+            self.checks_failed.append(f"Errore verifica Arc: {str(e)}")
             return False
 
     def check_linux_configuration(self) -> bool:
@@ -51,7 +110,6 @@ class EnvironmentChecker:
             return True
 
         try:
-            # Verifica permessi e file system
             checks: Dict[str, bool] = {
                 'hugepages': self._check_hugepages(),
                 'tmp_access': self._check_tmp_access(),
@@ -98,13 +156,30 @@ class EnvironmentChecker:
     def _check_gpu_permissions(self) -> bool:
         """Verifica permessi GPU"""
         try:
-            result = subprocess.run(
-                ['nvidia-smi'], 
-                capture_output=True, 
-                text=True,
-                timeout=10  # Aggiunto timeout di 10 secondi
-            )
-            return result.returncode == 0
+            # Check NVIDIA
+            if self.gpu_backends['cuda']:
+                result = subprocess.run(
+                    ['nvidia-smi'], 
+                    capture_output=True, 
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    return False
+                    
+            # Check Intel
+            if self.gpu_backends['arc']:
+                result = subprocess.run(
+                    ['intel_gpu_top'], 
+                    capture_output=True, 
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    return False
+                    
+            return True
+            
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
             return False
 
@@ -129,19 +204,24 @@ class EnvironmentChecker:
     def check_pytorch_configuration(self) -> bool:
         """Verifica configurazione PyTorch"""
         try:
-            # Verifica versione PyTorch
             version = torch.__version__
             build = torch.__config__.show()
             
-            if torch.cuda.is_available():
-                # Test basic CUDA operations
+            if any(self.gpu_backends.values()):
+                # Test basic GPU operations
                 x = torch.randn(100, 100).cuda()
                 y = torch.matmul(x, x)
                 del x, y
                 torch.cuda.empty_cache()
                 
+                backend_str = []
+                if self.gpu_backends['cuda']:
+                    backend_str.append("CUDA")
+                if self.gpu_backends['arc']:
+                    backend_str.append("Arc")
+                    
                 self.checks_passed.append(
-                    f"PyTorch {version} with CUDA support: OK"
+                    f"PyTorch {version} with {' & '.join(backend_str)} support: OK"
                 )
             else:
                 self.warnings.append(
@@ -158,6 +238,7 @@ class EnvironmentChecker:
         """Esegue tutti i controlli"""
         checks = [
             self.check_cuda_installation,
+            self.check_arc_installation,
             self.check_linux_configuration,
             self.check_memory_configuration,
             self.check_pytorch_configuration
@@ -199,6 +280,11 @@ class EnvironmentChecker:
         print(f"Passed: {len(self.checks_passed)}")
         print(f"Failed: {len(self.checks_failed)}")
         print(f"Warnings: {len(self.warnings)}")
+        
+        if self.gpu_backends['cuda'] or self.gpu_backends['arc']:
+            print("\nGPU Backend Status:")
+            print(f"CUDA: {'Available' if self.gpu_backends['cuda'] else 'Not Available'}")
+            print(f"Intel Arc: {'Available' if self.gpu_backends['arc'] else 'Not Available'}")
 
 def main() -> int:
     """Entry point per verifica ambiente"""

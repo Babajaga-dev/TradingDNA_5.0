@@ -100,6 +100,11 @@ def plot_evolution_history(generation_stats: List[Dict], plot_dir: Path):
     """Genera e salva grafici dell'evoluzione"""
     try:
         logger.info("Creating evolution history plots...")
+        
+        # Assicurati che la directory esista
+        plot_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Plot directory ensured: {plot_dir}")
+        
         stats_df = pd.DataFrame(generation_stats)
         
         # Plot 1: Fitness trends
@@ -139,6 +144,11 @@ def generate_evolution_report(evolution_state: Dict, report_dir: Path) -> str:
     """Genera un report dettagliato dell'evoluzione"""
     try:
         logger.info("Generating evolution report...")
+        
+        # Assicurati che la directory esista
+        report_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Report directory ensured: {report_dir}")
+        
         history_analysis = analyze_evolution_history(evolution_state['generation_stats'])
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
