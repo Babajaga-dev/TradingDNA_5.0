@@ -1,10 +1,11 @@
 import os
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
 from binance.client import Client
 import time
-from src.utils.config import config
+import yaml
 
 class BinanceDataDownloader:
     def __init__(self, api_key: str = '', api_secret: str = ''):
@@ -13,7 +14,7 @@ class BinanceDataDownloader:
         Le chiavi non sono necessarie per i dati storici, ma sono utili per aumentare i rate limits.
         """
         self.client = Client(api_key, api_secret)
-        self.BATCH_SIZE = config.get("download.batch_size", 1000)
+        self.BATCH_SIZE = 1000
         
     def download_historical_data(
         self,
@@ -138,17 +139,73 @@ class BinanceDataDownloader:
         
         return str(output_file)
 
+def load_config(config_path: str) -> dict:
+    """Carica la configurazione da file YAML"""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"File di configurazione non trovato: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
 def main():
-    # Carica i parametri dalla configurazione
-    symbol = config.get("download.symbol", "BTCUSDT")
-    interval = config.get("download.interval", "1m")
-    start_date = config.get("download.start_date", "2024-01-01")
-    end_date = config.get("download.end_date")
-    output_folder = config.get("download.output_folder", "data")
-    api_key = config.get("download.api.key", "")
-    api_secret = config.get("download.api.secret", "")
+    parser = argparse.ArgumentParser(
+        description='Download dati storici da Binance',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Esempi di utilizzo:
+    # Usa configurazione specifica
+    python download_binance.py --config config.yaml
+    
+    # Sovrascrivi parametri della configurazione
+    python download_binance.py --config config.yaml --symbol ETHUSDT --interval 1h
+    
+    # Esempio di config.yaml:
+    download:
+      symbol: "BTCUSDT"
+      interval: "1m"
+      start_date: "2024-01-01"
+      end_date: "2024-01-31"
+      output_folder: "data"
+      api:
+        key: ""
+        secret: ""
+        
+Intervalli supportati:
+    1m  -> 1 minuto
+    5m  -> 5 minuti
+    15m -> 15 minuti
+    1h  -> 1 ora
+    4h  -> 4 ore
+    1d  -> 1 giorno
+        """
+    )
+    
+    parser.add_argument('--config', type=str, required=True, help='File di configurazione YAML')
+    parser.add_argument('--symbol', type=str, help='Simbolo trading (es. BTCUSDT)')
+    parser.add_argument('--interval', type=str, help='Intervallo temporale (es. 1m, 5m, 1h, 1d)')
+    parser.add_argument('--start-date', type=str, help='Data iniziale (YYYY-MM-DD)')
+    parser.add_argument('--end-date', type=str, help='Data finale (YYYY-MM-DD)')
+    parser.add_argument('--output-folder', type=str, help='Cartella di output')
+    
+    args = parser.parse_args()
+    
+    # Carica configurazione
+    config = load_config(args.config)
+    download_config = config.get('download', {})
+    
+    # Combina parametri da config e CLI (CLI ha precedenza)
+    symbol = args.symbol or download_config.get("symbol", "BTCUSDT")
+    interval = args.interval or download_config.get("interval", "1m")
+    start_date = args.start_date or download_config.get("start_date", "2024-01-01")
+    end_date = args.end_date or download_config.get("end_date")
+    output_folder = args.output_folder or download_config.get("output_folder", "data")
+    
+    api_config = download_config.get("api", {})
+    api_key = api_config.get("key", "")
+    api_secret = api_config.get("secret", "")
     
     print("\nParametri di configurazione:")
+    print(f"Config file: {args.config}")
     print(f"Symbol: {symbol}")
     print(f"Interval: {interval}")
     print(f"Start Date: {start_date}")
