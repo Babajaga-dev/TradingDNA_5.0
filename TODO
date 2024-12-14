@@ -2,6 +2,10 @@ comando
 
 python cli.py evolve --data data/market_data_BTC_1m.csv > log.txt 2>&1
 
+python3 -m venv DNA
+source DNA/bin/activate
+
+
 
 ⚠️ Ottimizzazione terminata per mancanza di miglioramenti
 
