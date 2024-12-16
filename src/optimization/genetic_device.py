@@ -2,16 +2,21 @@ import logging
 import os
 import psutil
 import torch
+import intel_extension_for_pytorch as ipex
 import traceback
 import gc
 import time
-from typing import List, Tuple
+import numpy as np
+from typing import List, Tuple, Optional
+from contextlib import contextmanager, nullcontext
 
 logger = logging.getLogger(__name__)
 
 class DeviceManager:
     def __init__(self, config):
+        self.config = config  # Aggiungo l'assegnazione di config
         self.use_gpu = config.get("genetic.optimizer.use_gpu", False)
+        self.gpu_backend = config.get("genetic.optimizer.gpu_backend", "auto")
         self.precision = config.get("genetic.optimizer.device_config.precision", "float32")
         self.dtype = torch.float16 if self.precision == "float16" else torch.float32
         
@@ -23,10 +28,27 @@ class DeviceManager:
         self.gc_interval = memory_config.get("gc_interval", 300)
         self.last_gc_time = time.time()
         
+        # Parametri batch processing
+        batch_config = config.get("genetic.batch_processing", {})
+        self.batch_config = {
+            "enabled": batch_config.get("enabled", True),
+            "adaptive": batch_config.get("adaptive_batching", True),
+            "min_size": batch_config.get("min_batch_size", 16384),
+            "max_size": batch_config.get("max_batch_size", 65536),
+            "memory_limit": batch_config.get("memory_limit", 3072),
+            "prefetch": batch_config.get("prefetch_factor", 2),
+            "overlap": batch_config.get("overlap_transfers", True)
+        }
+        
         try:
-            if self.use_gpu and torch.cuda.is_available():
+            if not self.use_gpu:
+                self._setup_cpu(config)
+            elif self.gpu_backend == "arc" and torch.xpu.is_available():
+                self._setup_xpu(config)
+            elif (self.gpu_backend == "cuda" or self.gpu_backend == "auto") and torch.cuda.is_available():
                 self._setup_gpu(config)
             else:
+                logger.warning(f"Requested backend {self.gpu_backend} not available")
                 self._setup_cpu(config)
                 
         except Exception as e:
@@ -50,34 +72,77 @@ class DeviceManager:
             logger.warning(f"Error validating compute capability: {e}")
             return True
 
-    def _apply_optimization_level(self, level: int) -> None:
+    def _apply_optimization_level(self, level: int, backend: str) -> None:
         """Applica il livello di ottimizzazione specificato"""
         try:
             if not 0 <= level <= 3:
                 logger.warning(f"Invalid optimization level: {level}. Using default (3)")
                 level = 3
                 
-            if level >= 1:
-                torch.backends.cudnn.enabled = True
-                logger.info("CuDNN enabled")
-                
-            if level >= 2:
-                torch.backends.cudnn.benchmark = True
-                logger.info("CuDNN benchmark mode enabled")
-                
-            if level == 3:
-                if hasattr(torch.backends.cudnn, 'allow_tf32'):
-                    torch.backends.cudnn.allow_tf32 = True
-                if hasattr(torch.backends.cuda, 'matmul'):
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                if hasattr(torch, 'set_float32_matmul_precision'):
-                    torch.set_float32_matmul_precision('high')
-                logger.info("Level 3 optimizations enabled (including TF32 if supported)")
-                
+            if backend == "cuda":
+                if level >= 1:
+                    torch.backends.cudnn.enabled = True
+                    logger.info("CuDNN enabled")
+                    
+                if level >= 2:
+                    torch.backends.cudnn.benchmark = True
+                    logger.info("CuDNN benchmark mode enabled")
+                    
+                if level == 3:
+                    if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                        torch.backends.cudnn.allow_tf32 = True
+                    if hasattr(torch.backends.cuda, 'matmul'):
+                        torch.backends.cuda.matmul.allow_tf32 = True
+                    if hasattr(torch, 'set_float32_matmul_precision'):
+                        torch.set_float32_matmul_precision('high')
+                    logger.info("Level 3 optimizations enabled (including TF32 if supported)")
+            
+            elif backend == "xpu":
+                if level >= 1:
+                    # Ottimizzazioni base per XPU
+                    logger.info("XPU base optimizations enabled")
+                    
+                if level >= 2:
+                    # Abilita ottimizzazioni aggiuntive per XPU
+                    if hasattr(torch.xpu, 'enable_optimizations'):
+                        torch.xpu.enable_optimizations()
+                        logger.info("XPU additional optimizations enabled")
+                    
         except Exception as e:
             logger.error(f"Error applying optimization level: {e}")
 
+    def _setup_xpu(self, config):
+        """Setup per Intel XPU"""
+        self.devices = [torch.device("xpu")]
+        self.num_gpus = 1
+        
+        # Setup memoria GPU
+        arc_config = self.config.get("genetic.optimizer.device_config.arc", {})
+        self.memory_reserve = arc_config.get("memory_reserve", 1024)
+        self.max_batch_size = arc_config.get("max_batch_size", 65536)
+        
+        # Mixed precision
+        self.mixed_precision = arc_config.get("mixed_precision", True)
+        if self.mixed_precision:
+            # Configura il modello per FP16
+            self.dtype = torch.float16
+            logger.info("XPU mixed precision enabled")
+            
+        # Configurazione stream
+        num_streams = min(2, self.config.get("genetic.parallel_config.xpu_streams", 2))
+        self.streams = [torch.xpu.Stream() for _ in range(num_streams)]
+        
+        # Memory strategy
+        self.memory_strategy = arc_config.get("memory_strategy", {})
+        
+        # Applica ottimizzazioni XPU
+        opt_level = arc_config.get("optimization_level", 3)
+        self._apply_optimization_level(opt_level, "xpu")
+        
+        logger.info("Intel Arc GPU configuration completed")
+
     def _setup_gpu(self, config):
+        """Setup per NVIDIA GPU"""
         # Verifica compute capability
         required_cc = config.get("genetic.optimizer.cuda_config.compute_capability", "6.1")
         available_gpus = []
@@ -96,20 +161,21 @@ class DeviceManager:
         logger.info(f"Using {self.num_gpus} CUDA devices")
         
         # Setup memoria GPU
-        self.memory_reserve = config.get("genetic.optimizer.device_config.memory_reserve", 2048)
-        self.max_batch_size = config.get("genetic.optimizer.device_config.max_batch_size", 1024)
+        cuda_config = self.config.get("genetic.optimizer.device_config.cuda", {})
+        self.memory_reserve = cuda_config.get("memory_reserve", 2048)
+        self.max_batch_size = cuda_config.get("max_batch_size", 1024)
         
         # Mixed precision
-        self.mixed_precision = config.get("genetic.optimizer.device_config.mixed_precision", False)
+        self.mixed_precision = cuda_config.get("mixed_precision", True)
         if self.mixed_precision:
             self.scaler = torch.amp.GradScaler()
-            logger.info("Mixed precision training enabled")
             
         self._setup_cuda_config(config)
         self._setup_linux_specific(config)
-        self._log_gpu_info()
+        self._log_device_info()
 
     def _setup_cpu(self, config):
+        """Setup per CPU"""
         self.devices = [torch.device("cpu")]
         self.num_gpus = 1
         self.mixed_precision = False
@@ -119,11 +185,12 @@ class DeviceManager:
         logger.info(f"Using CPU with {cpu_threads} threads")
 
     def _setup_cuda_config(self, config):
+        """Setup configurazione CUDA"""
         cuda_config = config.get("genetic.optimizer.cuda_config", {})
         
         # Applica livello ottimizzazione
         opt_level = cuda_config.get("optimization_level", 3)
-        self._apply_optimization_level(opt_level)
+        self._apply_optimization_level(opt_level, "cuda")
         
         # Configura TF32
         allow_tf32 = cuda_config.get("allow_tf32", True)
@@ -154,6 +221,7 @@ class DeviceManager:
         }
 
     def _setup_linux_specific(self, config):
+        """Setup specifico per Linux"""
         if os.name == 'posix':
             linux_config = config.get("genetic.optimizer.linux_specific", {})
             if linux_config.get("process_affinity", False):
@@ -171,15 +239,11 @@ class DeviceManager:
                 except Exception as e:
                     logger.warning(f"Could not set shared memory strategy: {str(e)}")
 
-    def _log_gpu_info(self):
-        logger.info("\nGPU Configuration:")
-        logger.info(f"CUDA enabled: {torch.cuda.is_available()}")
+    def _log_device_info(self):
+        """Log informazioni sui dispositivi"""
+        logger.info("\nDevice Configuration:")
+        logger.info(f"Backend: {self.gpu_backend}")
         logger.info(f"Mixed precision: {self.mixed_precision}")
-        logger.info(f"CUDA compute capability required: {self.cuda_config['compute_capability']}")
-        logger.info(f"CUDA optimization level: {self.cuda_config['optimization_level']}")
-        logger.info(f"TF32 enabled: {self.cuda_config['allow_tf32']}")
-        logger.info(f"Benchmark mode: {self.cuda_config['benchmark']}")
-        logger.info(f"Deterministic mode: {self.cuda_config['deterministic']}")
         logger.info(f"Cache mode: {self.cache_mode}")
         logger.info(f"Defrag threshold: {self.defrag_threshold}")
         logger.info(f"Periodic GC: {self.periodic_gc}")
@@ -200,91 +264,188 @@ class DeviceManager:
                     logger.info(f"- Memory reserved: {self.memory_reserve / 1024:.1f} MB")
                 except Exception as e:
                     logger.warning(f"Could not get info for GPU {device.index}: {str(e)}")
+            elif device.type == "xpu":
+                try:
+                    memory_allocated = torch.xpu.memory_allocated() / 1e9
+                    memory_total = torch.xpu.get_device_properties().total_memory / 1e9
+                    
+                    logger.info("\nIntel Arc GPU:")
+                    logger.info(f"- Total memory: {memory_total:.2f} GB")
+                    logger.info(f"- Memory allocated: {memory_allocated:.2f} GB")
+                    logger.info(f"- Memory reserved: {self.memory_reserve / 1024:.1f} MB")
+                except Exception as e:
+                    logger.warning(f"Could not get info for XPU: {str(e)}")
 
-    def _check_memory_fragmentation(self) -> float:
-        """Calcola il livello di frammentazione della memoria"""
-        if not self.use_gpu:
-            return 0.0
-            
-        try:
-            allocated = torch.cuda.memory_allocated()
-            reserved = torch.cuda.memory_reserved()
-            if reserved == 0:
-                return 0.0
-            return 1.0 - (allocated / reserved)
-        except Exception as e:
-            logger.error(f"Error checking memory fragmentation: {str(e)}")
-            return 0.0
-
-    def _perform_defragmentation(self) -> None:
-        """Esegue la deframmentazione della memoria"""
+    def manage_memory(self) -> None:
+        """Gestisce la memoria secondo la configurazione"""
         if not self.use_gpu:
             return
             
         try:
-            # Forza il garbage collector
-            gc.collect()
-            torch.cuda.empty_cache()
+            if self.gpu_backend == "arc":
+                memory_allocated = torch.xpu.memory_allocated() / 1024**3
+                memory_reserved = torch.xpu.memory_reserved() / 1024**3
+            else:
+                memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                memory_reserved = torch.cuda.memory_reserved() / 1024**3
             
-            # Riallocazione tensori se necessario
-            if hasattr(torch.cuda, 'memory_stats'):
-                active_blocks = torch.cuda.memory_stats()['active_blocks.all.current']
-                if active_blocks > 100:  # soglia arbitraria
-                    torch.cuda.empty_cache()
-                    logger.info("Memory defragmentation performed")
-        except Exception as e:
-            logger.error(f"Error during memory defragmentation: {str(e)}")
-
-    def manage_cuda_memory(self) -> None:
-        """Gestisce la memoria CUDA in base alla strategia configurata"""
-        if not self.use_gpu:
-            return
-            
-        try:
-            memory_allocated = torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated()
-            
-            # Gestione cache in base alla modalità
-            if self.cache_mode == "aggressive":
-                # Svuota cache più frequentemente
-                if memory_allocated > 0.5:
-                    torch.cuda.empty_cache()
-                    logger.debug("Memory cache emptied (aggressive mode)")
-            elif self.cache_mode == "conservative":
-                # Mantiene più cache
-                if memory_allocated > 0.9:
-                    torch.cuda.empty_cache()
-                    logger.debug("Memory cache emptied (conservative mode)")
-            elif self.cache_mode == "auto":
-                # Comportamento adattivo basato sull'uso
-                if self.cuda_config["memory_strategy"]["preallocate"]:
-                    if memory_allocated < 0.5:
+            # Gestione memoria basata sulla strategia del backend
+            if self.memory_strategy.get("preallocate", False):
+                prealloc_thresh = self.memory_strategy.get("prealloc_threshold", 0.4)
+                if memory_allocated < prealloc_thresh * memory_reserved:
+                    if self.gpu_backend == "arc":
+                        torch.xpu.empty_cache()
+                    else:
                         torch.cuda.empty_cache()
-                        logger.debug("Memory cache emptied (auto mode - preallocation)")
+                    
+            # Gestione cache
+            empty_cache_thresh = self.memory_strategy.get("empty_cache_threshold", 0.8)
+            if memory_allocated > empty_cache_thresh * memory_reserved:
+                if self.gpu_backend == "arc":
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
                 
-                if memory_allocated > self.cuda_config["memory_strategy"]["empty_cache_threshold"]:
-                    torch.cuda.empty_cache()
-                    logger.info(f"Memory cache emptied (auto mode - threshold {memory_allocated:.2%})")
-            
-            # Controllo frammentazione
-            fragmentation = self._check_memory_fragmentation()
-            if fragmentation > self.defrag_threshold:
-                logger.info(f"High memory fragmentation detected: {fragmentation:.2%}")
-                self._perform_defragmentation()
-            
-            # Garbage collection periodico
+            # Garbage collection
             if self.periodic_gc:
-                current_time = time.time()
-                if current_time - self.last_gc_time > self.gc_interval:
+                force_release_thresh = self.memory_strategy.get("force_release_threshold", 0.9)
+                if memory_allocated > force_release_thresh * memory_reserved:
                     gc.collect()
-                    torch.cuda.empty_cache()
-                    self.last_gc_time = current_time
-                    logger.debug("Periodic garbage collection performed")
+                    
+        except Exception as e:
+            logger.error(f"Error in memory management: {str(e)}")
+
+    def get_optimal_batch_size(self, data_size: int) -> int:
+        """Determina la dimensione ottimale del batch"""
+        if not self.batch_config["enabled"] or not self.batch_config["adaptive"]:
+            return self.batch_config["max_size"]
             
-            # Forza rilascio memoria se critico
-            if memory_allocated > self.cuda_config["memory_strategy"]["force_release_threshold"]:
-                torch.cuda.empty_cache()
-                gc.collect()
-                logger.warning(f"Forced memory release (critical {memory_allocated:.2%})")
+        try:
+            if self.use_gpu:
+                # Calcolo basato sulla memoria disponibile
+                if self.gpu_backend == "arc":
+                    memory_allocated = torch.xpu.memory_allocated() / 1024**3
+                else:
+                    memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                    
+                memory_limit = self.batch_config["memory_limit"] / 1024
+                available_memory = max(0, memory_limit - memory_allocated)
+                
+                # Considera il prefetch factor
+                prefetch_overhead = self.batch_config["prefetch"] / 10
+                available_memory *= (1 - prefetch_overhead)
+                
+                # Calcolo dimensione batch
+                estimated_size = min(
+                    self.batch_config["max_size"],
+                    max(
+                        self.batch_config["min_size"],
+                        int(available_memory * 1024**3 / (32 * data_size))  # Assumiamo 32 bytes per elemento
+                    )
+                )
+                
+                # Aggiustamento per overlap
+                if self.batch_config["overlap"]:
+                    estimated_size = int(estimated_size * 0.9)
+                    
+                return estimated_size
+            else:
+                return self.batch_config["min_size"]
                 
         except Exception as e:
-            logger.error(f"Error in CUDA memory management: {str(e)}")
+            logger.error(f"Error calculating batch size: {str(e)}")
+            return self.batch_config["min_size"]
+
+    def prefetch_data(self, data: torch.Tensor) -> torch.Tensor:
+        """Prefetch dei dati in memoria device"""
+        try:
+            if not self.batch_config["enabled"] or not self.batch_config["overlap"]:
+                return data.to(self.devices[0])  # Usa il primo device disponibile
+                
+            if self.use_gpu:
+                stream = self.streams[0] if hasattr(self, 'streams') else None
+                if stream is not None:
+                    with stream:
+                        prefetched = data.to(self.devices[0], non_blocking=True)
+                    if self.batch_config["overlap"]:
+                        stream.synchronize()
+                    return prefetched
+                    
+            return data.to(self.devices[0])
+            
+        except Exception as e:
+            logger.error(f"Error in data prefetch: {str(e)}")
+            return data.to(self.devices[0])
+
+    @contextmanager
+    def batch_processing_context(self):
+        """Context manager per il batch processing"""
+        try:
+            if self.use_gpu and self.batch_config["enabled"]:
+                if self.batch_config["overlap"] and hasattr(self, 'streams'):
+                    if self.gpu_backend == "arc":
+                        torch.xpu.set_stream(self.streams[0])
+                    else:
+                        torch.cuda.set_stream(self.streams[0])
+                    
+                if self.batch_config["prefetch"] > 1:
+                    if self.gpu_backend == "arc":
+                        torch.xpu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
+                    
+            yield
+            
+        finally:
+            if self.use_gpu:
+                if self.gpu_backend == "arc":
+                    torch.xpu.set_stream(torch.xpu.default_stream())
+                    if self.batch_config["overlap"]:
+                        torch.xpu.synchronize()
+                else:
+                    torch.cuda.set_stream(torch.cuda.default_stream())
+                    if self.batch_config["overlap"]:
+                        torch.cuda.synchronize()
+
+    def to_tensor(self, data: any, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        """Converte i dati in tensor"""
+        try:
+            if isinstance(data, torch.Tensor):
+                tensor = data
+            elif isinstance(data, np.ndarray):
+                tensor = torch.from_numpy(data)
+            else:
+                tensor = torch.tensor(data)
+                
+            if dtype is not None:
+                tensor = tensor.to(dtype=dtype)
+            else:
+                tensor = tensor.to(dtype=self.dtype)
+                
+            return tensor.to(device=self.devices[0])
+            
+        except Exception as e:
+            logger.error(f"Error converting to tensor: {str(e)}")
+            raise
+
+    def cleanup(self):
+        """Pulizia risorse device"""
+        if self.use_gpu:
+            try:
+                # Sincronizza e libera stream
+                if hasattr(self, 'streams'):
+                    for stream in self.streams:
+                        stream.synchronize()
+                
+                # Libera memoria
+                if self.gpu_backend == "arc":
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
+                
+                # Reset device
+                if hasattr(self, 'scaler'):
+                    del self.scaler
+                    
+            except Exception as e:
+                logger.error(f"Error in cleanup: {str(e)}")

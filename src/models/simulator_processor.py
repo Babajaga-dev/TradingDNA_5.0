@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import logging
 from typing import Dict, Any
 from contextlib import nullcontext
@@ -32,7 +33,19 @@ class SimulationProcessor:
             stream = self.device_manager.get_stream(batch_slice.start % max(1, len(self.device_manager.streams)))
             
             with stream:
-                with torch.amp.autocast('cuda') if self.device_manager.mixed_precision else nullcontext():
+                # Configura mixed precision in base al backend
+                if self.device_manager.mixed_precision:
+                    if self.device_manager.gpu_backend == "arc":
+                        # XPU mixed precision è già configurata attraverso ipex.optimize()
+                        autocast_ctx = nullcontext()
+                    elif self.device_manager.gpu_backend == "cuda":
+                        autocast_ctx = torch.amp.autocast('cuda')
+                    else:
+                        autocast_ctx = nullcontext()
+                else:
+                    autocast_ctx = nullcontext()
+                    
+                with autocast_ctx:
                     self._process_batch_data(
                         batch_slice, prices, entry_conditions,
                         position_active, entry_prices, pnl,
@@ -40,7 +53,8 @@ class SimulationProcessor:
                     )
                     
             # Sincronizza stream se necessario
-            if isinstance(stream, torch.cuda.Stream):
+            if (self.device_manager.gpu_backend == "arc" and isinstance(stream, torch.xpu.Stream)) or \
+               (self.device_manager.gpu_backend == "cuda" and isinstance(stream, torch.cuda.Stream)):
                 stream.synchronize()
                     
         except Exception as e:

@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import numpy as np
 import logging
 from typing import Dict, Optional
@@ -79,10 +80,14 @@ class TorchDataManager:
         try:
             if self.device.type == "cuda":
                 torch.cuda.empty_cache()
+            elif self.device.type == "xpu":
+                torch.xpu.empty_cache()
             yield
         finally:
             if self.device.type == "cuda":
                 torch.cuda.empty_cache()
+            elif self.device.type == "xpu":
+                torch.xpu.empty_cache()
 
     def to_device(self, data: any, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
         """
@@ -114,11 +119,13 @@ class TorchDataManager:
 
     def clear_cache(self) -> None:
         """Pulisce la cache della memoria"""
-        if self.device.type == "cuda":
-            try:
+        try:
+            if self.device.type == "cuda":
                 torch.cuda.empty_cache()
-            except Exception as e:
-                logger.error(f"Error clearing CUDA cache: {e}")
+            elif self.device.type == "xpu":
+                torch.xpu.empty_cache()
+        except Exception as e:
+            logger.error(f"Error clearing device cache: {e}")
 
     def get_batch_size(self, data_size: int, config) -> int:
         """
@@ -132,13 +139,17 @@ class TorchDataManager:
             Batch size ottimale
         """
         try:
-            if self.device.type == "cuda":
+            if self.device.type in ["cuda", "xpu"]:
                 # Usa batch size basato su memoria GPU disponibile
                 memory_limit = config.get("genetic.batch_processing.memory_limit", 7900)
                 min_size = config.get("genetic.batch_processing.min_batch_size", 16384)
                 max_size = config.get("genetic.batch_processing.max_batch_size", 65536)
                 
-                memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                if self.device.type == "cuda":
+                    memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                else:  # xpu
+                    memory_allocated = torch.xpu.memory_allocated() / 1024**3
+                    
                 available_memory = max(0, memory_limit - memory_allocated)
                 
                 estimated_size = min(

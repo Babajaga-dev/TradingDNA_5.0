@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import pandas as pd
 import logging
 from typing import Dict, List, Optional, Any
@@ -89,14 +90,23 @@ class TradingSimulator:
             # Gestione memoria GPU
             if self.device_manager.use_gpu:
                 try:
-                    torch.cuda.empty_cache()
+                    if self.device_manager.gpu_backend == "arc":
+                        torch.xpu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
                 except Exception as e:
-                    logger.warning(f"Error clearing CUDA cache: {str(e)}")
+                    logger.warning(f"Error clearing GPU cache: {str(e)}")
                     
             # Garbage collection condizionale
             if self.device_manager.memory_config["periodic_gc"]:
                 try:
                     gc.collect()
+                    # Forza pulizia memoria GPU dopo garbage collection
+                    if self.device_manager.use_gpu:
+                        if self.device_manager.gpu_backend == "arc":
+                            torch.xpu.empty_cache()
+                        else:
+                            torch.cuda.empty_cache()
                 except Exception as e:
                     logger.warning(f"Error in garbage collection: {str(e)}")
                     

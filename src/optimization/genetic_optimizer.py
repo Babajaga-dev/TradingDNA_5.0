@@ -148,7 +148,7 @@ class ParallelGeneticOptimizer:
                 # Gestione memoria
                 if generation % 10 == 0:
                     if self.device_manager.use_gpu:
-                        self.device_manager.manage_cuda_memory()
+                        self.device_manager.manage_memory()
                     else:
                         gc.collect()
             
@@ -176,10 +176,11 @@ class ParallelGeneticOptimizer:
             
             # Cleanup finale
             if self.device_manager.use_gpu:
-                self.device_manager.manage_cuda_memory()
+                self.device_manager.manage_memory()
                 for device in self.device_manager.devices:
                     try:
-                        torch.cuda.synchronize(device)
+                        if hasattr(torch, 'cuda'):
+                            torch.cuda.synchronize(device)
                     except Exception as e:
                         logger.debug(f"Could not synchronize device {device}: {str(e)}")
             

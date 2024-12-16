@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import numpy as np
 import pandas as pd
 import talib
@@ -42,6 +43,10 @@ class MarketDataManager:
             filename: Nome del file da caricare
         """
         try:
+            # Aggiungi estensione .csv se non presente
+            if not filename.lower().endswith('.csv'):
+                filename = f"{filename}.csv"
+            
             # Costruisci il path completo
             data_dir = "data"
             file_path = os.path.join(data_dir, filename)
@@ -190,4 +195,7 @@ class MarketDataManager:
         """Pulisce la cache degli indicatori"""
         self.indicators_cache.clear()
         if self.device_manager.use_gpu:
-            torch.cuda.empty_cache()
+            if self.device_manager.gpu_backend == "arc":
+                torch.xpu.empty_cache()
+            else:
+                torch.cuda.empty_cache()

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Union, Any, TypedDict, cast
 from contextlib import contextmanager
 import torch
+import intel_extension_for_pytorch as ipex
 import numpy as np
 
 try:
@@ -36,6 +37,7 @@ class SystemHelper:
         self.is_windows = self.os_name == 'windows'
         self.python_version = sys.version_info[:3]
         self.cuda_available = torch.cuda.is_available()
+        self.xpu_available = torch.xpu.is_available()
 
     def get_memory_info(self) -> Dict[str, int]:
         """Ottiene informazioni sulla memoria del sistema"""
@@ -62,6 +64,8 @@ class SystemHelper:
     def get_gpu_info(self) -> List[GPUInfo]:
         """Ottiene informazioni sulle GPU disponibili"""
         gpu_info: List[GPUInfo] = []
+        
+        # Info NVIDIA GPU
         if self.cuda_available:
             try:
                 for i in range(torch.cuda.device_count()):
@@ -76,12 +80,29 @@ class SystemHelper:
                         'compute_capability': f"{props.major}.{props.minor}"
                     })
             except Exception as e:
-                logger.error(f"Error getting GPU info: {e}")
+                logger.error(f"Error getting NVIDIA GPU info: {e}")
+                
+        # Info Intel GPU
+        if self.xpu_available:
+            try:
+                for i in range(torch.xpu.device_count()):
+                    free_mem, total_mem = torch.xpu.mem_get_info(i)
+                    gpu_info.append({
+                        'index': i,
+                        'name': "Intel Arc GPU",
+                        'total_memory': total_mem,
+                        'free_memory': free_mem,
+                        'used_memory': total_mem - free_mem,
+                        'compute_capability': "1.0"  # Intel Arc non ha compute capability come NVIDIA
+                    })
+            except Exception as e:
+                logger.error(f"Error getting Intel GPU info: {e}")
+                
         return gpu_info
 
     def setup_cuda_cache(self, cache_dir: Optional[Path] = None) -> None:
-        """Configura la cache CUDA"""
-        if not self.cuda_available:
+        """Configura la cache GPU"""
+        if not (self.cuda_available or self.xpu_available):
             return
 
         try:
@@ -93,9 +114,13 @@ class SystemHelper:
 
             cache_dir.mkdir(parents=True, exist_ok=True)
             os.environ['TORCH_HOME'] = str(cache_dir)
-            torch.cuda.empty_cache()
+            
+            if self.cuda_available:
+                torch.cuda.empty_cache()
+            if self.xpu_available:
+                torch.xpu.empty_cache()
         except Exception as e:
-            logger.error(f"Error setting up CUDA cache: {e}")
+            logger.error(f"Error setting up GPU cache: {e}")
 
     def optimize_thread_settings(self) -> None:
         """Ottimizza le impostazioni dei thread"""
@@ -115,28 +140,40 @@ class SystemHelper:
     @contextmanager
     def temp_gpu_memory_limit(self, limit_mb: int):
         """Context manager per limitare temporaneamente la memoria GPU"""
-        if not self.cuda_available:
+        if not (self.cuda_available or self.xpu_available):
             yield
             return
 
         old_limits = []
         try:
-            # Salva limiti attuali
-            for i in range(torch.cuda.device_count()):
-                with torch.cuda.device(i):
-                    old_limit = torch.cuda.get_memory_allocation_limit()
-                    old_limits.append(old_limit)
-                    torch.cuda.set_per_process_memory_fraction(limit_mb / 1024)
+            # Salva limiti CUDA
+            if self.cuda_available:
+                for i in range(torch.cuda.device_count()):
+                    with torch.cuda.device(i):
+                        old_limit = torch.cuda.get_memory_allocation_limit()
+                        old_limits.append(('cuda', i, old_limit))
+                        torch.cuda.set_per_process_memory_fraction(limit_mb / 1024)
+                        
+            # Salva limiti XPU
+            if self.xpu_available:
+                for i in range(torch.xpu.device_count()):
+                    old_limit = torch.xpu.get_memory_allocation_limit()
+                    old_limits.append(('xpu', i, old_limit))
+                    # XPU non ha un metodo diretto per limitare la memoria, 
+                    # ma possiamo usare ipex per ottimizzare l'uso della memoria
+                    ipex.optimize_for_memory()
+                    
             yield
         except Exception as e:
             logger.error(f"Error setting GPU memory limit: {e}")
             raise
         finally:
             # Ripristina limiti
-            for i, old_limit in enumerate(old_limits):
+            for backend, i, old_limit in old_limits:
                 try:
-                    with torch.cuda.device(i):
-                        torch.cuda.set_memory_allocation_limit(old_limit)
+                    if backend == 'cuda':
+                        with torch.cuda.device(i):
+                            torch.cuda.set_memory_allocation_limit(old_limit)
                 except Exception as e:
                     logger.error(f"Error restoring GPU memory limit: {e}")
 
@@ -159,10 +196,18 @@ class SystemHelper:
         """Calcola la dimensione ottimale del batch in base alla memoria disponibile"""
         try:
             if self.cuda_available:
-                # Usa memoria GPU
+                # Usa memoria CUDA GPU
                 free_mem = min(
                     torch.cuda.mem_get_info(i)[0] 
                     for i in range(torch.cuda.device_count())
+                )
+                # Riserva 20% della memoria libera
+                usable_mem = int(free_mem * 0.8)
+            elif self.xpu_available:
+                # Usa memoria XPU GPU
+                free_mem = min(
+                    torch.xpu.mem_get_info(i)[0]
+                    for i in range(torch.xpu.device_count())
                 )
                 # Riserva 20% della memoria libera
                 usable_mem = int(free_mem * 0.8)
@@ -189,14 +234,19 @@ class SystemHelper:
 
     def clear_gpu_memory(self) -> None:
         """Libera la memoria GPU"""
-        if self.cuda_available:
-            try:
+        try:
+            if self.cuda_available:
                 torch.cuda.empty_cache()
                 for i in range(torch.cuda.device_count()):
                     with torch.cuda.device(i):
                         torch.cuda.memory._dump_snapshot(flush_gpu_cache=True)
-            except Exception as e:
-                logger.error(f"Error clearing GPU memory: {e}")
+                        
+            if self.xpu_available:
+                torch.xpu.empty_cache()
+                # XPU non ha un metodo equivalente a _dump_snapshot
+                
+        except Exception as e:
+            logger.error(f"Error clearing GPU memory: {e}")
 
     def setup_environment(self) -> None:
         """Configura l'ambiente di sistema"""
@@ -275,7 +325,7 @@ class SystemHelper:
             status['memory'] = self.get_memory_info()
 
             # Info GPU
-            if self.cuda_available:
+            if self.cuda_available or self.xpu_available:
                 status['gpu'] = self.get_gpu_info()
 
             # Info disco

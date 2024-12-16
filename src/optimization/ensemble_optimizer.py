@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import logging
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
@@ -21,7 +22,28 @@ class EnsembleGeneOptimizer:
         Args:
             device: Device PyTorch opzionale
         """
-        self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Setup device
+        if device is not None:
+            self.device = device
+        else:
+            gpu_backend = config.get("genetic.optimizer.gpu_backend", "auto")
+            use_gpu = config.get("genetic.optimizer.use_gpu", False)
+            
+            if not use_gpu:
+                self.device = torch.device("cpu")
+            elif gpu_backend == "arc" and torch.xpu.is_available():
+                self.device = torch.device("xpu")
+                # Ottimizza per XPU
+                ipex.optimize()
+            elif (gpu_backend == "cuda" or gpu_backend == "auto") and torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
+        
+        # Configura mixed precision
+        self.mixed_precision = config.get("genetic.optimizer.device_config.mixed_precision", False)
+        if self.mixed_precision and self.device.type == "cuda":
+            self.scaler = torch.amp.GradScaler()
         
         # Parametri base
         self.population_size = config.get("genetic.population_size", 100)
@@ -55,6 +77,11 @@ class EnsembleGeneOptimizer:
         # Stati
         self.population: List[List[TorchGene]] = []
         self.best_ensemble: Optional[List[TorchGene]] = None
+        
+        # Log configurazione
+        logger.info(f"Initialized EnsembleGeneOptimizer with device: {self.device}")
+        if self.mixed_precision:
+            logger.info("Mixed precision enabled")
 
     def optimize(self, simulator: TradingSimulator) -> Tuple[List[TorchGene], Dict[str, Any]]:
         """
@@ -78,6 +105,13 @@ class EnsembleGeneOptimizer:
             # Ciclo principale di evoluzione
             for generation in range(self.generations):
                 generation_start = datetime.now()
+                
+                # Gestione memoria GPU
+                if self.device.type != "cpu":
+                    if self.device.type == "xpu":
+                        torch.xpu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
                 
                 # Valuta popolazione
                 evaluated_population = self.population_manager.evaluate_population_parallel(
@@ -112,6 +146,13 @@ class EnsembleGeneOptimizer:
                     self.population_size,
                     self.elite_size
                 )
+            
+            # Cleanup finale
+            if self.device.type != "cpu":
+                if self.device.type == "xpu":
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
             
             # Gestisci caso di fallimento
             if self.best_ensemble is None:

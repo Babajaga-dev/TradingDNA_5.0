@@ -1,14 +1,22 @@
-import torch
+import torch; 
+import intel_extension_for_pytorch as ipex;
 
-# Rilevazione dispositivo
+import time
+
 device = torch.device("xpu" if torch.xpu.is_available() else "cpu")
-print(f"Using device: {device}")
 
-# Test operazioni sulla GPU (o CPU se XPU non è disponibile)
-try:
-    x = torch.randn(3, 3).to(device)
-    y = torch.randn(3, 3).to(device)
-    z = x + y
-    print(f"Result on {device}: {z}")
-except Exception as e:
-    print(f"Error using device {device}: {e}")
+# Operazione su CPU
+a_cpu = torch.randn(10000, 10000)
+b_cpu = torch.randn(10000, 10000)
+
+start = time.time()
+c_cpu = torch.matmul(a_cpu, b_cpu)
+print(f"CPU Time: {time.time() - start:.4f} seconds")
+
+# Operazione su GPU Intel Arc
+a_xpu = a_cpu.to(device)
+b_xpu = b_cpu.to(device)
+
+start = time.time()
+c_xpu = torch.matmul(a_xpu, b_xpu)
+print(f"XPU Time: {time.time() - start:.4f} seconds")

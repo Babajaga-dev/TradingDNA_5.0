@@ -1,8 +1,9 @@
 # src/models/simulator_device.py
 import torch
+import intel_extension_for_pytorch as ipex
+import numpy as np
 import gc
 import logging
-import numpy as np
 from typing import Dict, Optional, List, ContextManager
 from contextlib import contextmanager, nullcontext
 
@@ -21,7 +22,10 @@ class SimulatorDevice:
         
         logger.info(f"SimulatorDevice initialized with backend: {self.gpu_backend}")
         if self.use_gpu:
-            logger.info(f"Using device: {torch.cuda.get_device_name(0)}")
+            if self.gpu_backend == "arc":
+                logger.info(f"Using device: Intel Arc GPU")
+            elif self.gpu_backend == "cuda":
+                logger.info(f"Using device: {torch.cuda.get_device_name(0)}")
             logger.info(f"Mixed precision: {self.mixed_precision}")
             logger.info(f"Memory reserve: {self.memory_reserve}MB")
             logger.info(f"Element size: {self.element_size_bytes} bytes")
@@ -33,13 +37,16 @@ class SimulatorDevice:
             'arc': False
         }
         
+        # Controllo Intel XPU
+        if torch.xpu.is_available():
+            backends['arc'] = True
+            
+        # Controllo NVIDIA CUDA    
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 if 'NVIDIA' in props.name:
                     backends['cuda'] = True
-                if 'Intel' in props.name and 'Arc' in props.name:
-                    backends['arc'] = True
                     
         return backends
 
@@ -78,8 +85,7 @@ class SimulatorDevice:
 
     def _setup_arc_config(self):
         """Setup configurazione Intel Arc"""
-        torch.cuda.set_device(0)
-        self.device = torch.device("cuda")
+        self.device = torch.device("xpu")
         
         arc_config = self.config.get("genetic.optimizer.device_config.arc", {})
         
@@ -87,15 +93,17 @@ class SimulatorDevice:
         self.dtype = torch.float16  # Arc preferisce FP16
         self.memory_reserve = arc_config.get("memory_reserve", 1024)
         self.max_batch_size = arc_config.get("max_batch_size", 65536)
-        self.mixed_precision = arc_config.get("mixed_precision", True)
         
-        # Mixed precision setup
+        # Mixed precision
+        self.mixed_precision = arc_config.get("mixed_precision", True)
         if self.mixed_precision:
-            self.scaler = torch.amp.GradScaler()
+            # Configura il modello per FP16
+            self.dtype = torch.float16
+            logger.info("XPU mixed precision enabled")
             
         # Configurazione stream
-        num_streams = min(2, self.config.get("genetic.parallel_config.cuda_streams", 2))
-        self.streams = [torch.cuda.Stream() for _ in range(num_streams)]
+        num_streams = min(2, self.config.get("genetic.parallel_config.xpu_streams", 2))
+        self.streams = [torch.xpu.Stream() for _ in range(num_streams)]
         
         # Memory strategy
         self.memory_strategy = arc_config.get("memory_strategy", {})
@@ -113,9 +121,9 @@ class SimulatorDevice:
         self.dtype = torch.float32
         self.memory_reserve = cuda_config.get("memory_reserve", 2048)
         self.max_batch_size = cuda_config.get("max_batch_size", 131072)
-        self.mixed_precision = cuda_config.get("mixed_precision", True)
         
-        # Mixed precision setup
+        # Mixed precision
+        self.mixed_precision = cuda_config.get("mixed_precision", True)
         if self.mixed_precision:
             self.scaler = torch.amp.GradScaler()
             
@@ -210,9 +218,12 @@ class SimulatorDevice:
         logger.info(f"Overlap transfers: {self.batch_config['overlap']}")
 
     def get_stream(self, index: int) -> ContextManager:
-        """Ottiene uno stream CUDA o un contesto nullo"""
+        """Ottiene uno stream o un contesto nullo"""
         if self.streams and index < len(self.streams):
-            return torch.cuda.stream(self.streams[index])
+            if self.gpu_backend == "arc":
+                return torch.xpu.stream(self.streams[index])
+            elif self.gpu_backend == "cuda":
+                return torch.cuda.stream(self.streams[index])
         return nullcontext()
 
     def manage_memory(self) -> None:
@@ -221,19 +232,29 @@ class SimulatorDevice:
             return
             
         try:
-            memory_allocated = torch.cuda.memory_allocated() / 1024**3
-            memory_reserved = torch.cuda.memory_reserved() / 1024**3
+            if self.gpu_backend == "arc":
+                memory_allocated = torch.xpu.memory_allocated() / 1024**3
+                memory_reserved = torch.xpu.memory_reserved() / 1024**3
+            else:
+                memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                memory_reserved = torch.cuda.memory_reserved() / 1024**3
             
             # Gestione memoria basata sulla strategia del backend
             if self.memory_strategy.get("preallocate", False):
                 prealloc_thresh = self.memory_strategy.get("prealloc_threshold", 0.4)
                 if memory_allocated < prealloc_thresh * memory_reserved:
-                    torch.cuda.empty_cache()
+                    if self.gpu_backend == "arc":
+                        torch.xpu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
                     
             # Gestione cache
             empty_cache_thresh = self.memory_strategy.get("empty_cache_threshold", 0.8)
             if memory_allocated > empty_cache_thresh * memory_reserved:
-                torch.cuda.empty_cache()
+                if self.gpu_backend == "arc":
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
                 
             # Garbage collection
             if self.memory_config["periodic_gc"]:
@@ -252,7 +273,11 @@ class SimulatorDevice:
         try:
             if self.use_gpu:
                 # Calcolo basato sulla memoria disponibile
-                memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                if self.gpu_backend == "arc":
+                    memory_allocated = torch.xpu.memory_allocated() / 1024**3
+                else:
+                    memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                    
                 memory_limit = self.batch_config["memory_limit"] / 1024
                 available_memory = max(0, memory_limit - memory_allocated)
                 
@@ -289,7 +314,8 @@ class SimulatorDevice:
                 
             if self.use_gpu:
                 stream = self.get_stream(0)
-                if isinstance(stream, torch.cuda.Stream):
+                if (self.gpu_backend == "arc" and isinstance(stream, torch.xpu.Stream)) or \
+                   (self.gpu_backend == "cuda" and isinstance(stream, torch.cuda.Stream)):
                     with stream:
                         prefetched = data.to(self.device, non_blocking=True)
                     if self.batch_config["overlap"]:
@@ -308,18 +334,29 @@ class SimulatorDevice:
         try:
             if self.use_gpu and self.batch_config["enabled"]:
                 if self.batch_config["overlap"]:
-                    torch.cuda.set_stream(self.get_stream(0))
+                    if self.gpu_backend == "arc":
+                        torch.xpu.set_stream(self.get_stream(0))
+                    else:
+                        torch.cuda.set_stream(self.get_stream(0))
                     
                 if self.batch_config["prefetch"] > 1:
-                    torch.cuda.empty_cache()
+                    if self.gpu_backend == "arc":
+                        torch.xpu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
                     
             yield
             
         finally:
             if self.use_gpu:
-                torch.cuda.set_stream(torch.cuda.default_stream())
-                if self.batch_config["overlap"]:
-                    torch.cuda.synchronize()
+                if self.gpu_backend == "arc":
+                    torch.xpu.set_stream(torch.xpu.default_stream())
+                    if self.batch_config["overlap"]:
+                        torch.xpu.synchronize()
+                else:
+                    torch.cuda.set_stream(torch.cuda.default_stream())
+                    if self.batch_config["overlap"]:
+                        torch.cuda.synchronize()
 
     def to_tensor(self, data: any, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
         """Converte i dati in tensor"""
@@ -351,7 +388,10 @@ class SimulatorDevice:
                     stream.synchronize()
                 
                 # Libera memoria
-                torch.cuda.empty_cache()
+                if self.gpu_backend == "arc":
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
                 
                 # Reset device
                 if hasattr(self, 'scaler'):

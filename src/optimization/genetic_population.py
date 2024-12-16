@@ -126,16 +126,23 @@ class PopulationManager:
             unique_signatures: Set[Tuple] = set()
             total_genes = len(self.population)
             
-            fitness_scores = [gene.fitness_score or 0 for gene in self.population]
-            if fitness_scores:
-                min_fitness = min(fitness_scores)
-                max_fitness = max(fitness_scores)
-                fitness_range = max_fitness - min_fitness if max_fitness > min_fitness else 1
+            # Filtra i valori NaN dai fitness scores
+            fitness_scores = [gene.fitness_score for gene in self.population if gene.fitness_score is not None]
+            if not fitness_scores:  # Se non ci sono fitness scores validi
+                return 0.0
                 
+            # Calcola min e max fitness escludendo NaN
+            min_fitness = np.nanmin(fitness_scores)
+            max_fitness = np.nanmax(fitness_scores)
+            fitness_range = max_fitness - min_fitness if max_fitness > min_fitness else 1
+            
             weighted_signatures = []
             for gene in self.population:
+                if gene.fitness_score is None:
+                    continue
+                    
                 signature = []
-                normalized_fitness = ((gene.fitness_score or 0) - min_fitness) / fitness_range if fitness_range > 0 else 0
+                normalized_fitness = (gene.fitness_score - min_fitness) / fitness_range if fitness_range > 0 else 0
                 fitness_weight = 1.0 + normalized_fitness
                 
                 for key, value in sorted(gene.dna.items()):
@@ -158,6 +165,9 @@ class PopulationManager:
                 
                 weighted_signatures.append(tuple(signature))
             
+            if not weighted_signatures:  # Se non ci sono signatures valide
+                return 0.0
+                
             unique_signatures = set(weighted_signatures)
             simple_diversity = len(unique_signatures) / total_genes
             
@@ -202,8 +212,13 @@ class PopulationManager:
             Lista degli individui elite
         """
         try:
-            sorted_pop = sorted(self.population, 
-                              key=lambda x: x.fitness_score or 0, 
+            # Filtra individui con fitness score valido
+            valid_population = [gene for gene in self.population if gene.fitness_score is not None]
+            if not valid_population:
+                return []
+                
+            sorted_pop = sorted(valid_population, 
+                              key=lambda x: x.fitness_score, 
                               reverse=True)
             return deepcopy(sorted_pop[:self.elite_size])
         except Exception as e:

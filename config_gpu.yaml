@@ -1,7 +1,7 @@
 simulator:
   initial_capital: 10000
   min_candles: 50
-  data_file: "market_data_LUNC_1m"
+  data_file: "market_data_BTC_1m"
   metrics:
     returns_limit: 10.0
     min_equity: 1e-6
@@ -11,28 +11,28 @@ simulator:
 system:
   environment_check:
     hugepages:
-      min_count: 64
+      min_count: 32  # Ridotto da 64 per sistemi mobili
     memory:
-      min_total_gb: 12
-      min_available_gb: 4
+      min_total_gb: 8  # Ridotto da 12
+      min_available_gb: 3  # Ridotto da 4
     gpu:
-      command_timeout_sec: 15
+      command_timeout_sec: 10  # Ridotto da 15
   
   process:
     linux:
-      nice_high: -5
-      nice_low: 10
-      oom_score: 1000
+      nice_high: -10
+      nice_low: 5
+      oom_score: 800
     memory:
-      gpu_reserve_pct: 0.25
-      ram_reserve_pct: 0.35
+      gpu_reserve_pct: 0.20
+      ram_reserve_pct: 0.25
     batch:
-      max_size: 2048
-      default_size: 16
-      fallback_size: 8
+      max_size: 1024
+      default_size: 8
+      fallback_size: 4
     workers:
-      max_count: 8
-      reserved_cores: 1
+      max_count: 12
+      reserved_cores: 2
 
 trading:
   position:
@@ -108,47 +108,73 @@ trading:
         max_size: 20.0
 
 genetic:
-  population_size: 120
+  population_size: 80
   generations: 75
   mutation_rate: 0.55
   elite_size: 2
-  tournament_size: 6
-  min_trades: 200
-  batch_size: 12
+  tournament_size: 4
+  min_trades: 150
+  batch_size: 8
 
   optimizer:
-    gpu_backend: "arc"  # auto, cuda, arc, cpu
+    gpu_backend: "arc"
     use_gpu: true
-    torch_threads: 8
+    torch_threads: 6
     device_config:
+      precision: "float16"
       cuda:
-        enabled: true
-        precision: "float32"
-        memory_reserve: 2048
-        mixed_precision: true
-        max_batch_size: 131072
-        memory_strategy:
-          preallocate: true
-          prealloc_threshold: 0.4
-          empty_cache_threshold: 0.8
-          force_release_threshold: 0.9
+        enabled: false
       arc:
         enabled: true
         precision: "float16"
-        memory_reserve: 1024
+        memory_reserve: 512
         mixed_precision: true
-        max_batch_size: 65536
+        max_batch_size: 32768
         memory_strategy:
           preallocate: true
-          prealloc_threshold: 0.3
-          empty_cache_threshold: 0.7
-          force_release_threshold: 0.8
+          prealloc_threshold: 0.4
+          empty_cache_threshold: 0.75
+          force_release_threshold: 0.85
     
     cuda_config:
       optimization_level: 3
-      allow_tf32: true
+      allow_tf32: false
       benchmark: true
       deterministic: false
+
+  batch_processing:
+    enabled: true
+    adaptive_batching: true
+    min_batch_size: 8192
+    max_batch_size: 32768
+    memory_limit: 1024
+    prefetch_factor: 2
+    overlap_transfers: true
+
+  parallel_config:
+    chunk_size: 64
+    cuda_streams: 0
+    xpu_streams: 2
+    async_loading: true
+    pin_memory: true
+    persistent_workers: true
+
+  performance_monitoring:
+    enabled: true
+    metrics_interval: 1
+    memory_warnings: true
+    threshold_utilization: 0.85
+
+  adaptive_mutation:
+    enabled: true
+    initial_rate: 0.55
+    min_rate: 0.1
+    max_rate: 0.8
+    adaptation_speed: 0.1
+    fitness_threshold: 0.6
+    stagnation_threshold: 5
+    reset_threshold: 10
+    diversity_weight: 0.3
 
   momentum_gene:
     enabled: true
@@ -225,14 +251,7 @@ genetic:
     release_threshold: 0.8
     defrag_threshold: 0.6
     periodic_gc: true
-    gc_interval: 90
-
-  parallel_config:
-    chunk_size: 128
-    cuda_streams: 2
-    async_loading: true
-    pin_memory: true
-    persistent_workers: true
+    gc_interval: 60
 
   ensemble_weights:
     base_gene: 0.25
@@ -265,7 +284,7 @@ genetic:
         penalty: 0.95
 
 download:
-  symbol: "LUNCUSDT"
+  symbol: "BTCUSDT"
   interval: "1m"
   start_date: "2023-06-01"
   end_date: null

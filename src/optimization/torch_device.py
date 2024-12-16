@@ -1,4 +1,5 @@
 import torch
+import intel_extension_for_pytorch as ipex
 import logging
 import psutil
 from typing import List, Tuple, Optional
@@ -8,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DeviceConfig:
-    """Configurazione di un dispositivo (CPU o GPU)"""
+    """Configurazione di un dispositivo (CPU, CUDA o XPU)"""
     device_type: str
     device_index: int
     name: str
@@ -39,7 +40,23 @@ class TorchDeviceManager:
                 compute_capability=None
             ))
 
-            # Controlla GPU disponibili
+            # Controlla Intel XPU
+            if torch.xpu.is_available():
+                for i in range(torch.xpu.device_count()):
+                    try:
+                        mem_free, mem_total = torch.xpu.mem_get_info(i)
+                        self.devices.append(DeviceConfig(
+                            device_type="xpu",
+                            device_index=i,
+                            name="Intel Arc GPU",
+                            memory_total=mem_total,
+                            memory_free=mem_free,
+                            compute_capability=(1, 0)  # Intel Arc non ha compute capability come NVIDIA
+                        ))
+                    except Exception as e:
+                        logger.error(f"Error detecting XPU {i}: {e}")
+
+            # Controlla NVIDIA GPU
             if torch.cuda.is_available():
                 for i in range(torch.cuda.device_count()):
                     try:
@@ -60,8 +77,9 @@ class TorchDeviceManager:
             logger.info("Detected devices:")
             for dev in self.devices:
                 logger.info(f"- {dev.name} ({dev.device_type})")
-                if dev.device_type == "cuda":
-                    logger.info(f"  Compute capability: {dev.compute_capability}")
+                if dev.device_type in ["cuda", "xpu"]:
+                    if dev.device_type == "cuda":
+                        logger.info(f"  Compute capability: {dev.compute_capability}")
                     logger.info(f"  Memory: {dev.memory_total / 1024**3:.1f}GB")
                     
         except Exception as e:
@@ -101,30 +119,41 @@ class TorchDeviceManager:
             logger.warning(f"Invalid compute capability format: {required_cc}")
             return True
 
-    def _apply_optimization_level(self, level: int) -> None:
+    def _apply_optimization_level(self, level: int, device_type: str) -> None:
         """
-        Applica il livello di ottimizzazione CUDA
+        Applica il livello di ottimizzazione per il dispositivo
         
         Args:
             level: Livello di ottimizzazione (0-3)
+            device_type: Tipo di dispositivo ("cuda" o "xpu")
         """
         try:
             if not 0 <= level <= 3:
                 logger.warning(f"Invalid optimization level: {level}. Using default (3)")
                 level = 3
                 
-            if level >= 1:
-                torch.backends.cudnn.enabled = True
-            if level >= 2:
-                torch.backends.cudnn.benchmark = True
-            if level == 3:
-                # Abilita ottimizzazioni aggressive
-                if hasattr(torch.backends.cudnn, 'allow_tf32'):
-                    torch.backends.cudnn.allow_tf32 = True
-                if hasattr(torch, 'set_float32_matmul_precision'):
-                    torch.set_float32_matmul_precision('high')
+            if device_type == "cuda":
+                if level >= 1:
+                    torch.backends.cudnn.enabled = True
+                if level >= 2:
+                    torch.backends.cudnn.benchmark = True
+                if level == 3:
+                    # Abilita ottimizzazioni aggressive
+                    if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                        torch.backends.cudnn.allow_tf32 = True
+                    if hasattr(torch, 'set_float32_matmul_precision'):
+                        torch.set_float32_matmul_precision('high')
+            elif device_type == "xpu":
+                if level >= 1:
+                    ipex.enable_auto_mixed_precision(dtype='float16')
+                if level >= 2:
+                    # Ottimizzazioni aggiuntive per XPU
+                    ipex.optimize_for_inference()
+                if level == 3:
+                    # Massime ottimizzazioni per XPU
+                    ipex.optimize_for_training()
                     
-            logger.info(f"Applied CUDA optimization level: {level}")
+            logger.info(f"Applied {device_type.upper()} optimization level: {level}")
         except Exception as e:
             logger.error(f"Error applying optimization level: {e}")
 
@@ -140,12 +169,34 @@ class TorchDeviceManager:
         """
         try:
             use_gpu = config.get("genetic.optimizer.use_gpu", False)
+            gpu_backend = config.get("genetic.optimizer.gpu_backend", "auto")
             
-            if use_gpu and len([d for d in self.devices if d.device_type == "cuda"]) > 0:
-                # Verifica compute capability richiesta
-                required_cc = config.get("genetic.optimizer.cuda_config.compute_capability")
-                cuda_devices = [d for d in self.devices if d.device_type == "cuda"]
+            if not use_gpu:
+                logger.info("Using CPU device (GPU disabled in config)")
+                return torch.device("cpu")
                 
+            # Cerca dispositivi GPU disponibili
+            xpu_devices = [d for d in self.devices if d.device_type == "xpu"]
+            cuda_devices = [d for d in self.devices if d.device_type == "cuda"]
+            
+            # Selezione automatica backend
+            if gpu_backend == "auto":
+                if xpu_devices:
+                    gpu_backend = "arc"
+                elif cuda_devices:
+                    gpu_backend = "cuda"
+                else:
+                    gpu_backend = "cpu"
+            
+            # Seleziona dispositivo in base al backend
+            if gpu_backend == "arc" and xpu_devices:
+                # Seleziona XPU con più memoria libera
+                best_gpu = max(xpu_devices, key=lambda x: x.memory_free)
+                logger.info(f"Selected XPU device: {best_gpu.name}")
+                return torch.device("xpu")
+            elif gpu_backend == "cuda" and cuda_devices:
+                # Verifica compute capability per CUDA
+                required_cc = config.get("genetic.optimizer.cuda_config.compute_capability")
                 if required_cc:
                     cuda_devices = [
                         d for d in cuda_devices 
@@ -158,11 +209,11 @@ class TorchDeviceManager:
                 
                 # Seleziona GPU con più memoria libera
                 best_gpu = max(cuda_devices, key=lambda x: x.memory_free)
-                logger.info(f"Selected GPU device: {best_gpu.name}")
+                logger.info(f"Selected CUDA device: {best_gpu.name}")
                 return torch.device(f"cuda:{best_gpu.device_index}")
-            else:
-                logger.info("Using CPU device")
-                return torch.device("cpu")
+            
+            logger.info("No suitable GPU found, using CPU device")
+            return torch.device("cpu")
                 
         except Exception as e:
             logger.error(f"Error selecting device: {e}")
@@ -181,13 +232,32 @@ class TorchDeviceManager:
             if torch_threads:
                 torch.set_num_threads(torch_threads)
                 logger.info(f"Set CPU threads to {torch_threads}")
-        else:
+                
+        elif device.type == "xpu":
+            # Configura XPU
+            xpu_config = config.get("genetic.optimizer.device_config.arc", {})
+            
+            # Applica livello ottimizzazione
+            opt_level = xpu_config.get("optimization_level", 3)
+            self._apply_optimization_level(opt_level, "xpu")
+            
+            # Configura mixed precision
+            if xpu_config.get("mixed_precision", True):
+                ipex.enable_auto_mixed_precision(dtype='float16')
+                logger.info("XPU mixed precision enabled")
+            
+            # Log configurazione finale
+            logger.info("XPU configuration:")
+            logger.info(f"- Optimization level: {opt_level}")
+            logger.info(f"- Mixed precision: {xpu_config.get('mixed_precision', True)}")
+            
+        else:  # cuda
             # Configura CUDA
             cuda_config = config.get("genetic.optimizer.cuda_config", {})
             
             # Applica livello ottimizzazione
             opt_level = cuda_config.get("optimization_level", 3)
-            self._apply_optimization_level(opt_level)
+            self._apply_optimization_level(opt_level, "cuda")
             
             # Configura TF32
             if hasattr(torch.backends.cuda, 'allow_tf32'):

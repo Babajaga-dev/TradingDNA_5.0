@@ -4,6 +4,7 @@ import platform
 import logging
 import psutil
 import torch
+import intel_extension_for_pytorch as ipex
 import torch.multiprocessing as mp
 from pathlib import Path
 from typing import Optional, Dict, List, Any, TypedDict, Union, cast
@@ -134,12 +135,18 @@ def setup_training_environment() -> None:
             mp.set_start_method('spawn', force=True)
         
         # Configura PyTorch
+        torch.set_default_dtype(torch.float32)
+        
+        # Configura CUDA se disponibile
         if system_helper.cuda_available:
-            torch.set_default_dtype(torch.float32)
             torch.cuda.amp.autocast(enabled=True)
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cuda.matmul.allow_tf32 = True
+        
+        # Configura XPU se disponibile
+        if torch.xpu.is_available():
+            ipex.optimize(dtype=torch.float16)
         
         # Ottimizza sistema
         system_helper.optimize_thread_settings()
@@ -186,22 +193,22 @@ def get_optimal_worker_count() -> int:
 def safe_gpu_memory():
     """Context manager per gestire la memoria GPU in modo sicuro"""
     try:
+        # Gestione CUDA
         if torch.cuda.is_available():
-            # Libera memoria GPU all'inizio
             torch.cuda.empty_cache()
-            
-            # Cattura gli avvisi CUDA
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', category=UserWarning)
                 yield
-                
-            # Libera memoria GPU alla fine
             torch.cuda.empty_cache()
+        # Gestione XPU
+        elif torch.xpu.is_available():
+            torch.xpu.empty_cache()
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=UserWarning)
+                yield
+            torch.xpu.empty_cache()
         else:
             yield
     except Exception as e:
         logger.error(f"Error in GPU memory management: {e}")
         raise
-    finally:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()

@@ -1,6 +1,7 @@
 # src/utils/environment_check.py
 import sys
 import torch
+import intel_extension_for_pytorch as ipex
 import psutil
 import logging
 import platform
@@ -25,15 +26,18 @@ class EnvironmentChecker:
         }
         
         try:
+            # Controllo Intel XPU
+            if torch.xpu.is_available():
+                backends['arc'] = True
+                self.checks_passed.append("Intel Arc GPU detected")
+            
+            # Controllo NVIDIA CUDA
             if torch.cuda.is_available():
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     if 'NVIDIA' in props.name:
                         backends['cuda'] = True
                         self.checks_passed.append(f"NVIDIA GPU detected: {props.name}")
-                    if 'Intel' in props.name and 'Arc' in props.name:
-                        backends['arc'] = True
-                        self.checks_passed.append(f"Intel Arc GPU detected: {props.name}")
             
             if not any(backends.values()):
                 self.warnings.append("No GPU backends detected")
@@ -80,21 +84,14 @@ class EnvironmentChecker:
             return True  # Skip if no Arc GPU
 
         try:
-            device_count = torch.cuda.device_count()
-            
-            arc_devices = [i for i in range(device_count) 
-                         if 'Intel' in torch.cuda.get_device_properties(i).name 
-                         and 'Arc' in torch.cuda.get_device_properties(i).name]
-            
-            if arc_devices:
-                self.checks_passed.append(f"Intel Arc devices found: {len(arc_devices)}")
+            if torch.xpu.is_available():
+                device_count = torch.xpu.device_count()
+                self.checks_passed.append(f"Intel Arc devices found: {device_count}")
                 
-                for i in arc_devices:
-                    props = torch.cuda.get_device_properties(i)
-                    mem_free, mem_total = torch.cuda.mem_get_info(i)
+                for i in range(device_count):
+                    mem_free, mem_total = torch.xpu.mem_get_info(i)
                     self.checks_passed.append(
-                        f"Arc GPU {i}: {props.name} - "
-                        f"Compute: {props.major}.{props.minor} - "
+                        f"Arc GPU {i}: Intel Arc - "
                         f"Memory: {mem_total/1024**3:.1f}GB"
                     )
             
@@ -209,10 +206,20 @@ class EnvironmentChecker:
             
             if any(self.gpu_backends.values()):
                 # Test basic GPU operations
-                x = torch.randn(100, 100).cuda()
+                if self.gpu_backends['arc']:
+                    device = torch.device("xpu")
+                    x = torch.randn(100, 100).to(device)
+                elif self.gpu_backends['cuda']:
+                    device = torch.device("cuda")
+                    x = torch.randn(100, 100).to(device)
+                    
                 y = torch.matmul(x, x)
                 del x, y
-                torch.cuda.empty_cache()
+                
+                if self.gpu_backends['arc']:
+                    torch.xpu.empty_cache()
+                else:
+                    torch.cuda.empty_cache()
                 
                 backend_str = []
                 if self.gpu_backends['cuda']:

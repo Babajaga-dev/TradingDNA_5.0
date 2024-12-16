@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 import torch
+import intel_extension_for_pytorch as ipex
 from typing import List, Tuple, Dict, Optional
 from contextlib import nullcontext
 
@@ -78,8 +79,12 @@ class PopulationEvaluator:
                     
                 if self.device_manager.use_gpu and gpu_id == 0:
                     try:
-                        memory_allocated = torch.cuda.memory_allocated(device) / 1e9
-                        logger.debug(f"GPU memory used: {memory_allocated:.2f} GB")
+                        if self.device_manager.gpu_backend == "arc":
+                            memory_allocated = torch.xpu.memory_allocated() / 1e9
+                            logger.debug(f"XPU memory used: {memory_allocated:.2f} GB")
+                        else:
+                            memory_allocated = torch.cuda.memory_allocated(device) / 1e9
+                            logger.debug(f"GPU memory used: {memory_allocated:.2f} GB")
                     except Exception as e:
                         logger.debug(f"Could not get GPU memory info: {str(e)}")
             
@@ -162,7 +167,19 @@ class PopulationEvaluator:
                 if self.device_manager.use_gpu:
                     entry_conditions = to_tensor(entry_conditions, device, self.device_manager.dtype)
                 
-                with torch.amp.autocast('cuda') if self.device_manager.mixed_precision else nullcontext():
+                # Configura mixed precision in base al backend
+                if self.device_manager.mixed_precision:
+                    if self.device_manager.gpu_backend == "arc":
+                        # XPU mixed precision è già configurata attraverso ipex.optimize()
+                        autocast_ctx = nullcontext()
+                    elif self.device_manager.gpu_backend == "cuda":
+                        autocast_ctx = torch.amp.autocast('cuda')
+                    else:
+                        autocast_ctx = nullcontext()
+                else:
+                    autocast_ctx = nullcontext()
+                
+                with autocast_ctx:
                     metrics = simulator.run_simulation_vectorized(entry_conditions, gene)
                 
                 fitness = calculate_fitness(

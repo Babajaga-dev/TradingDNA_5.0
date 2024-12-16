@@ -201,7 +201,6 @@ genetic:
       - MORNINGSTAR
       - HARAMI
 
-  # Parametri evolutivi ottimizzati
   mutation_decay: 0.985  # Ridotto da 0.995
   diversity_threshold: 0.35  # Aumentato da 0.25
   restart_threshold: 6  # Ridotto da 8
@@ -209,27 +208,23 @@ genetic:
   restart_elite_fraction: 0.15  # Aumentato da 0.12
   restart_mutation_multiplier: 2.0  # Ridotto da 2.2
 
-  # Parametri diversità ottimizzati
   diversity:
     top_performer_threshold: 0.75  # Ridotto da 0.8
     performance_bonus_limit: 0.15  # Aumentato da 0.1
     performance_bonus_multiplier: 0.25  # Aumentato da 0.2
     injection_fraction: 0.3  # Aumentato da 0.2
 
-  # Parametri riproduzione ottimizzati
   reproduction:
     crossover_probability: 0.75  # Ridotto da 0.85
     strong_mutation_multiplier: 1.8  # Aumentato da 1.5
     max_attempts_multiplier: 2.5  # Aumentato da 2.0
 
-  # Monitoraggio performance ottimizzato
   performance_monitoring:
     enabled: true
     metrics_interval: 4  # Aumentato da 2
     memory_warnings: true
     threshold_utilization: 0.9  # Aumentato da 0.85
 
-  # Batch processing ottimizzato
   batch_processing:
     enabled: true
     adaptive_batching: true
@@ -239,7 +234,6 @@ genetic:
     prefetch_factor: 2  # Ridotto da 3
     overlap_transfers: true  # Cambiato da false
 
-  # Gestione memoria ottimizzata
   memory_management:
     preallocation: true
     cache_mode: "balanced"  # Cambiato per bilanciare prestazioni e memoria
@@ -248,7 +242,6 @@ genetic:
     periodic_gc: true
     gc_interval: 90  # Ridotto per pulizia più frequente
 
-  # Configurazione parallela ottimizzata
   parallel_config:
     chunk_size: 128  # Ridotto da 256
     cuda_streams: 2  # Aumentato da 1
