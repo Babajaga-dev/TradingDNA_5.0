@@ -1,6 +1,6 @@
-# src/models/genes/base.py
 import traceback
 import numpy as np
+import torch
 from typing import Dict, Optional, Tuple
 import logging
 import random
@@ -77,6 +77,25 @@ class TradingGene:
 
         return {"timeperiod": int(period)}
 
+    def _to_numpy(self, data):
+        """Converte in modo sicuro i dati in numpy array"""
+        try:
+            if isinstance(data, torch.Tensor):
+                # Sposta il tensore su CPU e converte in numpy
+                return data.detach().cpu().numpy()
+            elif isinstance(data, np.ndarray):
+                return data
+            else:
+                return np.array(data)
+        except Exception as e:
+            logger.error(f"Error converting to numpy: {str(e)}")
+            if isinstance(data, torch.Tensor):
+                shape = data.shape
+                device = data.device
+                dtype = data.dtype
+                logger.error(f"Tensor info - Shape: {shape}, Device: {device}, Dtype: {dtype}")
+            return np.array([])
+
     def generate_entry_conditions(self, data: Dict[str, np.ndarray]) -> np.ndarray:
         """Genera le condizioni di ingresso basate sul DNA"""
         try:
@@ -115,9 +134,14 @@ class TradingGene:
                 logger.error(f"Available indicators: {list(data.keys())}")
                 return np.zeros(len(next(iter(data.values()))), dtype=bool)
 
-            # Ottieni i valori
-            values1 = data[ind1_key]
-            values2 = data[ind2_key]
+            # Ottieni i valori e convertili in numpy arrays
+            values1 = self._to_numpy(data[ind1_key])
+            values2 = self._to_numpy(data[ind2_key])
+            
+            if len(values1) == 0 or len(values2) == 0:
+                logger.error("Error converting indicator values to numpy arrays")
+                return np.zeros(len(next(iter(data.values()))), dtype=bool)
+
             results = np.zeros_like(values1, dtype=bool)
 
             # Genera i segnali
@@ -138,6 +162,7 @@ class TradingGene:
             return np.zeros(len(next(iter(data.values()))), dtype=bool)
         except Exception as e:
             logger.error(f"Error in generate_entry_conditions: {str(e)}")
+            logger.error(traceback.format_exc())
             return np.zeros(len(next(iter(data.values()))), dtype=bool)
 
     def _get_common_indicator_pair(self) -> Tuple[str, str]:
