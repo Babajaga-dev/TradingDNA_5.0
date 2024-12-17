@@ -1,5 +1,4 @@
 import torch
-import intel_extension_for_pytorch as ipex
 import numpy as np
 import logging
 from typing import Dict, Optional

@@ -4,7 +4,6 @@ import platform
 import logging
 import psutil
 import torch
-import intel_extension_for_pytorch as ipex
 import torch.multiprocessing as mp
 from pathlib import Path
 from typing import Optional, Dict, List, Any, TypedDict, Union, cast
@@ -146,7 +145,11 @@ def setup_training_environment() -> None:
         
         # Configura XPU se disponibile
         if torch.xpu.is_available():
-            ipex.optimize(dtype=torch.float16)
+            try:
+                import intel_extension_for_pytorch as ipex
+                ipex.optimize(dtype=torch.float16)
+            except ImportError:
+                logger.warning("Intel Extension for PyTorch not found, skipping XPU optimization")
         
         # Ottimizza sistema
         system_helper.optimize_thread_settings()
@@ -202,11 +205,14 @@ def safe_gpu_memory():
             torch.cuda.empty_cache()
         # Gestione XPU
         elif torch.xpu.is_available():
-            torch.xpu.empty_cache()
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=UserWarning)
+            try:
+                torch.xpu.empty_cache()
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=UserWarning)
+                    yield
+                torch.xpu.empty_cache()
+            except Exception:
                 yield
-            torch.xpu.empty_cache()
         else:
             yield
     except Exception as e:

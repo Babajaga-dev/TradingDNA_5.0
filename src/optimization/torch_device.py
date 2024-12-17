@@ -1,5 +1,4 @@
 import torch
-import intel_extension_for_pytorch as ipex
 import logging
 import psutil
 from typing import List, Tuple, Optional
@@ -41,20 +40,24 @@ class TorchDeviceManager:
             ))
 
             # Controlla Intel XPU
-            if torch.xpu.is_available():
-                for i in range(torch.xpu.device_count()):
-                    try:
-                        mem_free, mem_total = torch.xpu.mem_get_info(i)
-                        self.devices.append(DeviceConfig(
-                            device_type="xpu",
-                            device_index=i,
-                            name="Intel Arc GPU",
-                            memory_total=mem_total,
-                            memory_free=mem_free,
-                            compute_capability=(1, 0)  # Intel Arc non ha compute capability come NVIDIA
-                        ))
-                    except Exception as e:
-                        logger.error(f"Error detecting XPU {i}: {e}")
+            try:
+                import intel_extension_for_pytorch as ipex
+                if torch.xpu.is_available():
+                    for i in range(torch.xpu.device_count()):
+                        try:
+                            mem_free, mem_total = torch.xpu.mem_get_info(i)
+                            self.devices.append(DeviceConfig(
+                                device_type="xpu",
+                                device_index=i,
+                                name="Intel Arc GPU",
+                                memory_total=mem_total,
+                                memory_free=mem_free,
+                                compute_capability=(1, 0)  # Intel Arc non ha compute capability come NVIDIA
+                            ))
+                        except Exception as e:
+                            logger.error(f"Error detecting XPU {i}: {e}")
+            except ImportError:
+                pass
 
             # Controlla NVIDIA GPU
             if torch.cuda.is_available():
@@ -144,14 +147,18 @@ class TorchDeviceManager:
                     if hasattr(torch, 'set_float32_matmul_precision'):
                         torch.set_float32_matmul_precision('high')
             elif device_type == "xpu":
-                if level >= 1:
-                    ipex.enable_auto_mixed_precision(dtype='float16')
-                if level >= 2:
-                    # Ottimizzazioni aggiuntive per XPU
-                    ipex.optimize_for_inference()
-                if level == 3:
-                    # Massime ottimizzazioni per XPU
-                    ipex.optimize_for_training()
+                try:
+                    import intel_extension_for_pytorch as ipex
+                    if level >= 1:
+                        ipex.enable_auto_mixed_precision(dtype='float16')
+                    if level >= 2:
+                        # Ottimizzazioni aggiuntive per XPU
+                        ipex.optimize_for_inference()
+                    if level == 3:
+                        # Massime ottimizzazioni per XPU
+                        ipex.optimize_for_training()
+                except ImportError:
+                    logger.warning("Intel Extension for PyTorch not found, skipping XPU optimizations")
                     
             logger.info(f"Applied {device_type.upper()} optimization level: {level}")
         except Exception as e:
@@ -234,22 +241,26 @@ class TorchDeviceManager:
                 logger.info(f"Set CPU threads to {torch_threads}")
                 
         elif device.type == "xpu":
-            # Configura XPU
-            xpu_config = config.get("genetic.optimizer.device_config.arc", {})
-            
-            # Applica livello ottimizzazione
-            opt_level = xpu_config.get("optimization_level", 3)
-            self._apply_optimization_level(opt_level, "xpu")
-            
-            # Configura mixed precision
-            if xpu_config.get("mixed_precision", True):
-                ipex.enable_auto_mixed_precision(dtype='float16')
-                logger.info("XPU mixed precision enabled")
-            
-            # Log configurazione finale
-            logger.info("XPU configuration:")
-            logger.info(f"- Optimization level: {opt_level}")
-            logger.info(f"- Mixed precision: {xpu_config.get('mixed_precision', True)}")
+            try:
+                import intel_extension_for_pytorch as ipex
+                # Configura XPU
+                xpu_config = config.get("genetic.optimizer.device_config.arc", {})
+                
+                # Applica livello ottimizzazione
+                opt_level = xpu_config.get("optimization_level", 3)
+                self._apply_optimization_level(opt_level, "xpu")
+                
+                # Configura mixed precision
+                if xpu_config.get("mixed_precision", True):
+                    ipex.enable_auto_mixed_precision(dtype='float16')
+                    logger.info("XPU mixed precision enabled")
+                
+                # Log configurazione finale
+                logger.info("XPU configuration:")
+                logger.info(f"- Optimization level: {opt_level}")
+                logger.info(f"- Mixed precision: {xpu_config.get('mixed_precision', True)}")
+            except ImportError:
+                logger.warning("Intel Extension for PyTorch not found, using basic XPU configuration")
             
         else:  # cuda
             # Configura CUDA

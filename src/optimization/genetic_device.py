@@ -2,7 +2,6 @@ import logging
 import os
 import psutil
 import torch
-import intel_extension_for_pytorch as ipex
 import traceback
 import gc
 import time
@@ -43,8 +42,18 @@ class DeviceManager:
         try:
             if not self.use_gpu:
                 self._setup_cpu(config)
-            elif self.gpu_backend == "arc" and torch.xpu.is_available():
-                self._setup_xpu(config)
+            elif self.gpu_backend == "arc":
+                # Import Intel extension solo se necessario
+                try:
+                    import intel_extension_for_pytorch as ipex
+                    if torch.xpu.is_available():
+                        self._setup_xpu(config)
+                    else:
+                        logger.warning("Intel XPU not available")
+                        self._setup_cpu(config)
+                except ImportError:
+                    logger.warning("Intel Extension for PyTorch not found")
+                    self._setup_cpu(config)
             elif (self.gpu_backend == "cuda" or self.gpu_backend == "auto") and torch.cuda.is_available():
                 self._setup_gpu(config)
             else:

@@ -1,7 +1,6 @@
 import logging
 import psutil
 import torch
-import intel_extension_for_pytorch as ipex
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +34,13 @@ class PerformanceMonitor:
             try:
                 if device.type == "xpu":
                     # Monitoraggio Intel XPU
-                    memory_allocated = torch.xpu.memory_allocated() / 1e9
-                    memory_reserved = torch.xpu.memory_reserved() / 1e9
-                    device_name = "Intel Arc GPU"
+                    try:
+                        memory_allocated = torch.xpu.memory_allocated() / 1e9
+                        memory_reserved = torch.xpu.memory_reserved() / 1e9
+                        device_name = "Intel Arc GPU"
+                    except Exception as e:
+                        logger.error(f"Error monitoring XPU: {str(e)}")
+                        continue
                 elif device.type == "cuda":
                     # Monitoraggio NVIDIA CUDA
                     memory_allocated = torch.cuda.memory_allocated(device) / 1e9
@@ -66,7 +69,7 @@ class PerformanceMonitor:
                         logger.debug(f"CUDA Active Memory Blocks: {active_blocks}")
                 
             except Exception as e:
-                logger.error(f"Error monitoring device {device_name}: {str(e)}")
+                logger.error(f"Error monitoring device {device}: {str(e)}")
 
     def _monitor_system_resources(self) -> None:
         """Monitora l'utilizzo di CPU e RAM"""
@@ -106,9 +109,12 @@ class PerformanceMonitor:
             
             # Log metriche GPU se disponibili
             if self.use_gpu:
-                if self.gpu_backend == "arc" and torch.xpu.is_available():
-                    memory_allocated = torch.xpu.memory_allocated() / 1e9
-                    logger.info(f"XPU Memory Usage: {memory_allocated:.2f}GB")
+                if self.gpu_backend == "arc":
+                    try:
+                        memory_allocated = torch.xpu.memory_allocated() / 1e9
+                        logger.info(f"XPU Memory Usage: {memory_allocated:.2f}GB")
+                    except Exception:
+                        pass
                 elif torch.cuda.is_available():
                     memory_allocated = torch.cuda.memory_allocated() / 1e9
                     logger.info(f"CUDA Memory Usage: {memory_allocated:.2f}GB")
@@ -122,11 +128,18 @@ class PerformanceMonitor:
             stats = {}
             
             if device.type == "xpu":
-                stats.update({
-                    'allocated': torch.xpu.memory_allocated() / 1e9,
-                    'reserved': torch.xpu.memory_reserved() / 1e9,
-                    'device_type': 'xpu'
-                })
+                try:
+                    stats.update({
+                        'allocated': torch.xpu.memory_allocated() / 1e9,
+                        'reserved': torch.xpu.memory_reserved() / 1e9,
+                        'device_type': 'xpu'
+                    })
+                except Exception as e:
+                    logger.error(f"Error getting XPU memory stats: {str(e)}")
+                    stats.update({
+                        'error': str(e),
+                        'device_type': 'xpu'
+                    })
             elif device.type == "cuda":
                 stats.update({
                     'allocated': torch.cuda.memory_allocated(device) / 1e9,

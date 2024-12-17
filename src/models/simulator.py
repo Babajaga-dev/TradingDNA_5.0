@@ -1,5 +1,4 @@
 import torch
-import intel_extension_for_pytorch as ipex
 import pandas as pd
 import logging
 from typing import Dict, List, Optional, Any

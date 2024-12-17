@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Optional, List, Dict, Union, Any, TypedDict, cast
 from contextlib import contextmanager
 import torch
-import intel_extension_for_pytorch as ipex
 import numpy as np
 
 try:
@@ -37,7 +36,7 @@ class SystemHelper:
         self.is_windows = self.os_name == 'windows'
         self.python_version = sys.version_info[:3]
         self.cuda_available = torch.cuda.is_available()
-        self.xpu_available = torch.xpu.is_available()
+        self.xpu_available = hasattr(torch, 'xpu') and torch.xpu.is_available()
 
     def get_memory_info(self) -> Dict[str, int]:
         """Ottiene informazioni sulla memoria del sistema"""
@@ -159,9 +158,11 @@ class SystemHelper:
                 for i in range(torch.xpu.device_count()):
                     old_limit = torch.xpu.get_memory_allocation_limit()
                     old_limits.append(('xpu', i, old_limit))
-                    # XPU non ha un metodo diretto per limitare la memoria, 
-                    # ma possiamo usare ipex per ottimizzare l'uso della memoria
-                    ipex.optimize_for_memory()
+                    try:
+                        import intel_extension_for_pytorch as ipex
+                        ipex.optimize_for_memory()
+                    except ImportError:
+                        pass
                     
             yield
         except Exception as e:
@@ -243,7 +244,6 @@ class SystemHelper:
                         
             if self.xpu_available:
                 torch.xpu.empty_cache()
-                # XPU non ha un metodo equivalente a _dump_snapshot
                 
         except Exception as e:
             logger.error(f"Error clearing GPU memory: {e}")

@@ -1,5 +1,4 @@
 import torch
-import intel_extension_for_pytorch as ipex
 import logging
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
@@ -31,10 +30,18 @@ class EnsembleGeneOptimizer:
             
             if not use_gpu:
                 self.device = torch.device("cpu")
-            elif gpu_backend == "arc" and torch.xpu.is_available():
-                self.device = torch.device("xpu")
-                # Ottimizza per XPU
-                ipex.optimize()
+            elif gpu_backend == "arc":
+                try:
+                    import intel_extension_for_pytorch as ipex
+                    if torch.xpu.is_available():
+                        self.device = torch.device("xpu")
+                        # Ottimizza per XPU
+                        ipex.optimize()
+                    else:
+                        self.device = torch.device("cpu")
+                except ImportError:
+                    logger.warning("Intel Extension for PyTorch not found, using CPU")
+                    self.device = torch.device("cpu")
             elif (gpu_backend == "cuda" or gpu_backend == "auto") and torch.cuda.is_available():
                 self.device = torch.device("cuda")
             else:

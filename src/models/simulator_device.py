@@ -1,6 +1,5 @@
 # src/models/simulator_device.py
 import torch
-import intel_extension_for_pytorch as ipex
 import numpy as np
 import gc
 import logging
@@ -38,8 +37,12 @@ class SimulatorDevice:
         }
         
         # Controllo Intel XPU
-        if torch.xpu.is_available():
-            backends['arc'] = True
+        try:
+            import intel_extension_for_pytorch as ipex
+            if torch.xpu.is_available():
+                backends['arc'] = True
+        except ImportError:
+            pass
             
         # Controllo NVIDIA CUDA    
         if torch.cuda.is_available():
@@ -85,30 +88,35 @@ class SimulatorDevice:
 
     def _setup_arc_config(self):
         """Setup configurazione Intel Arc"""
-        self.device = torch.device("xpu")
-        
-        arc_config = self.config.get("genetic.optimizer.device_config.arc", {})
-        
-        # Configurazioni ottimizzate per Arc
-        self.dtype = torch.float16  # Arc preferisce FP16
-        self.memory_reserve = arc_config.get("memory_reserve", 1024)
-        self.max_batch_size = arc_config.get("max_batch_size", 65536)
-        
-        # Mixed precision
-        self.mixed_precision = arc_config.get("mixed_precision", True)
-        if self.mixed_precision:
-            # Configura il modello per FP16
-            self.dtype = torch.float16
-            logger.info("XPU mixed precision enabled")
+        try:
+            import intel_extension_for_pytorch as ipex
+            self.device = torch.device("xpu")
             
-        # Configurazione stream
-        num_streams = min(2, self.config.get("genetic.parallel_config.xpu_streams", 2))
-        self.streams = [torch.xpu.Stream() for _ in range(num_streams)]
-        
-        # Memory strategy
-        self.memory_strategy = arc_config.get("memory_strategy", {})
-        
-        logger.info("Intel Arc GPU configuration completed")
+            arc_config = self.config.get("genetic.optimizer.device_config.arc", {})
+            
+            # Configurazioni ottimizzate per Arc
+            self.dtype = torch.float16  # Arc preferisce FP16
+            self.memory_reserve = arc_config.get("memory_reserve", 1024)
+            self.max_batch_size = arc_config.get("max_batch_size", 65536)
+            
+            # Mixed precision
+            self.mixed_precision = arc_config.get("mixed_precision", True)
+            if self.mixed_precision:
+                # Configura il modello per FP16
+                self.dtype = torch.float16
+                logger.info("XPU mixed precision enabled")
+                
+            # Configurazione stream
+            num_streams = min(2, self.config.get("genetic.parallel_config.xpu_streams", 2))
+            self.streams = [torch.xpu.Stream() for _ in range(num_streams)]
+            
+            # Memory strategy
+            self.memory_strategy = arc_config.get("memory_strategy", {})
+            
+            logger.info("Intel Arc GPU configuration completed")
+        except ImportError:
+            logger.error("Intel Extension for PyTorch not found")
+            self._setup_cpu_fallback()
 
     def _setup_cuda_config(self):
         """Setup configurazione NVIDIA CUDA"""

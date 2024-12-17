@@ -1,7 +1,6 @@
 import logging
 import numpy as np
 import torch
-import intel_extension_for_pytorch as ipex
 from typing import List, Tuple, Dict, Optional
 from contextlib import nullcontext
 
@@ -170,8 +169,12 @@ class PopulationEvaluator:
                 # Configura mixed precision in base al backend
                 if self.device_manager.mixed_precision:
                     if self.device_manager.gpu_backend == "arc":
-                        # XPU mixed precision è già configurata attraverso ipex.optimize()
-                        autocast_ctx = nullcontext()
+                        try:
+                            import intel_extension_for_pytorch as ipex
+                            # XPU mixed precision è già configurata attraverso ipex.optimize()
+                            autocast_ctx = nullcontext()
+                        except ImportError:
+                            autocast_ctx = nullcontext()
                     elif self.device_manager.gpu_backend == "cuda":
                         autocast_ctx = torch.amp.autocast('cuda')
                     else:

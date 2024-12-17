@@ -1,7 +1,6 @@
 # src/utils/environment_check.py
 import sys
 import torch
-import intel_extension_for_pytorch as ipex
 import psutil
 import logging
 import platform
@@ -27,9 +26,13 @@ class EnvironmentChecker:
         
         try:
             # Controllo Intel XPU
-            if torch.xpu.is_available():
-                backends['arc'] = True
-                self.checks_passed.append("Intel Arc GPU detected")
+            try:
+                import intel_extension_for_pytorch as ipex
+                if torch.xpu.is_available():
+                    backends['arc'] = True
+                    self.checks_passed.append("Intel Arc GPU detected")
+            except ImportError:
+                pass
             
             # Controllo NVIDIA CUDA
             if torch.cuda.is_available():

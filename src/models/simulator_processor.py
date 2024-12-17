@@ -1,5 +1,4 @@
 import torch
-import intel_extension_for_pytorch as ipex
 import logging
 from typing import Dict, Any
 from contextlib import nullcontext
@@ -11,6 +10,18 @@ class SimulationProcessor:
     def __init__(self, device_manager, config):
         self.device_manager = device_manager
         self.config = config
+        
+        # Setup backend
+        self.gpu_backend = config.get("genetic.optimizer.gpu_backend", "cuda")
+        if self.gpu_backend == "arc":
+            try:
+                import intel_extension_for_pytorch as ipex
+                self.backend = ipex
+            except ImportError:
+                logger.warning("Intel Extension for PyTorch not found, falling back to default PyTorch")
+                self.backend = None
+        else:
+            self.backend = None
         
         # Parametri trading
         self.position_size_pct = config.get("trading.position.size_pct", 5) / 100
