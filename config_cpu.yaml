@@ -1,7 +1,7 @@
 simulator:
   initial_capital: 10000
   min_candles: 50
-  data_file: "market_data_LUNC_1m"
+  data_file: "market_data_BTC_1m"
   metrics:
     returns_limit: 10.0
     min_equity: 1e-6
@@ -117,7 +117,7 @@ genetic:
   batch_size: 12
 
   optimizer:
-    gpu_backend: "auto"  # auto, cuda, arc, cpu
+    gpu_backend: "cpu"  # auto, cuda, arc, cpu
     use_gpu: false
     torch_threads: 8
     device_config:
@@ -280,7 +280,7 @@ genetic:
         penalty: 0.95  # Aumentato da 0.9
 
 download:
-  symbol: "LUNCUSDT"
+  symbol: "BTCUSDT"
   interval: "1m"
   start_date: "2023-06-01"
   end_date: null

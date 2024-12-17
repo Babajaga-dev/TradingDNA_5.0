@@ -11,12 +11,12 @@ simulator:
 system:
   environment_check:
     hugepages:
-      min_count: 32  # Ridotto da 64 per sistemi mobili
+      min_count: 32
     memory:
-      min_total_gb: 8  # Ridotto da 12
-      min_available_gb: 3  # Ridotto da 4
+      min_total_gb: 8
+      min_available_gb: 3
     gpu:
-      command_timeout_sec: 10  # Ridotto da 15
+      command_timeout_sec: 10
   
   process:
     linux:
@@ -114,27 +114,27 @@ genetic:
   elite_size: 2
   tournament_size: 4
   min_trades: 150
-  batch_size: 8
+  batch_size: 16384
 
   optimizer:
     gpu_backend: "arc"
     use_gpu: true
     torch_threads: 6
     device_config:
-      precision: "float16"
+      precision: "float32"
       cuda:
         enabled: false
       arc:
         enabled: true
-        precision: "float16"
-        memory_reserve: 512
+        precision: "float32"
+        memory_reserve: 2048
         mixed_precision: true
         max_batch_size: 32768
         memory_strategy:
-          preallocate: true
+          preallocate: false  # Disabilitato per evitare conflitti
           prealloc_threshold: 0.4
-          empty_cache_threshold: 0.75
-          force_release_threshold: 0.85
+          empty_cache_threshold: 0.85  # Aumentato
+          force_release_threshold: 0.95  # Aumentato
     
     cuda_config:
       optimization_level: 3
@@ -147,15 +147,15 @@ genetic:
     adaptive_batching: true
     min_batch_size: 8192
     max_batch_size: 32768
-    memory_limit: 1024
-    prefetch_factor: 2
-    overlap_transfers: true
+    memory_limit: 2048
+    prefetch_factor: 1  # Ridotto per minor consumo memoria
+    overlap_transfers: false  # Disabilitato per evitare conflitti
 
   parallel_config:
-    chunk_size: 64
+    chunk_size: 128
     cuda_streams: 0
-    xpu_streams: 2
-    async_loading: true
+    xpu_streams: 1
+    async_loading: false  # Disabilitato per evitare conflitti
     pin_memory: true
     persistent_workers: true
 
@@ -246,12 +246,12 @@ genetic:
     max_attempts_multiplier: 2.5
 
   memory_management:
-    preallocation: true
-    cache_mode: "balanced"
-    release_threshold: 0.8
-    defrag_threshold: 0.6
+    preallocation: false  # Disabilitato per evitare conflitti
+    cache_mode: "conservative"  # Cambiato da balanced a conservative
+    release_threshold: 0.85  # Aumentato
+    defrag_threshold: 0.75  # Aumentato
     periodic_gc: true
-    gc_interval: 60
+    gc_interval: 30  # Ridotto per pulizia più frequente
 
   ensemble_weights:
     base_gene: 0.25

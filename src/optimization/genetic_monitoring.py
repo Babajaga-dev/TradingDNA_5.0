@@ -97,7 +97,7 @@ class PerformanceMonitor:
     def log_optimization_progress(self, stats: dict) -> None:
         """Logga i progressi dell'ottimizzazione"""
         try:
-            logger.info("\nOptimization Progress:")
+            logger.info("Optimization Progress:")
             logger.info(f"Best Fitness: {stats['best_fitness']:.4f}")
             logger.info(f"Average Fitness: {stats['avg_fitness']:.4f}")
             logger.info(f"Population Diversity: {stats['diversity']:.4f}")
