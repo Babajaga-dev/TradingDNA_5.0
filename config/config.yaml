@@ -1,0 +1,51 @@
+trading:
+  position:
+    size_pct: 5        # Percentage of capital allocated per position
+    stop_loss_pct: 1.5 # Stop loss percentage
+    take_profit_pct: 3.0 # Take profit percentage
+  initial_capital: 10000 # Initial capital for the simulation
+
+genetic:
+  population_size: 80    # Number of individuals in the population
+  generations: 75        # Number of generations
+  mutation_rate: 0.55    # Mutation probability for each gene
+
+indicators:
+  rsi:
+    period: 14           # RSI indicator period
+  moving_average:
+    period: 50           # Moving average period
+  macd:
+    fastperiod: 12       # MACD fast EMA period
+    slowperiod: 26       # MACD slow EMA period
+    signalperiod: 9      # MACD signal period
+  stochastic:
+    k_period: 14         # %K period
+    d_period: 3          # %D period
+    smooth: 3            # Smoothing factor
+  atr:
+    period: 14           # ATR period
+  cci:
+    period: 20           # CCI period
+  volatility:
+    window: 14           # Volatility window period
+
+data:
+  market_data_file: "data/market_data_BTC_1m.csv" # Path to market data file
+
+strategies:
+  RSI:
+    buy_threshold: 30    # RSI oversold threshold
+    sell_threshold: 70   # RSI overbought threshold
+  MACD:
+    zero_cross_threshold: 0 # MACD zero-crossing point
+  Stochastic:
+    oversold: 20         # %K oversold threshold
+    overbought: 80       # %K overbought threshold
+
+hardware:
+  device: "auto"         # Options: "auto", "cpu", "cuda", "arc"
+
+tests:
+  validate_signals: true  # Perform signal validation checks during simulation
+  report_output: "output/simulation_report.csv"  # Path to save simulation results
