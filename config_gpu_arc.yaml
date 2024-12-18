@@ -36,7 +36,7 @@ system:
 
 trading:
   position:
-    size_pct: 40
+    size_pct: 5  # Modificato da 40 a 5
     stop_loss_pct: 1.5
     take_profit_pct: 3.0
 
@@ -45,18 +45,18 @@ trading:
       indicator1:
         type: "EMA"
         params:
-          timeperiod: 15
+          timeperiod: 25
       indicator2:
         type: "EMA"
         params:
-          timeperiod: 40
+          timeperiod: 50
       operator: "cross_above"
 
     exit:
       indicator1:
         type: "RSI"
         params:
-          timeperiod: 12
+          timeperiod: 14
       indicator2:
         type: "CLOSE"
         params: {}
@@ -64,41 +64,41 @@ trading:
 
     parameters:
       bollinger:
-        num_std: 2.2
+        num_std: 2.5
       rsi:
         epsilon: 1e-10
         scale: 100.0
       macd:
-        fast_period: 10
-        slow_period: 22
-        signal_period: 7
+        fast_period: 12
+        slow_period: 26
+        signal_period: 9
       ema:
-        alpha_multiplier: 2.2
+        alpha_multiplier: 2.5
       ranges:
         timeperiod:
-          min: 4
+          min: 8
           max: 40
         fast_period:
-          min: 4
+          min: 8
           max: 16
         slow_period:
-          min: 12
+          min: 16
           max: 32
         signal_period:
-          min: 4
+          min: 6
           max: 12
 
   volatility_gene:
     enabled: true
     parameters:
       timeperiod:
-        min: 4
+        min: 8
         max: 80
-        default: 12
+        default: 14
       multiplier:
-        min: 0.3
+        min: 0.5
         max: 2.0
-        default: 0.8
+        default: 1.0
       base_position_size:
         min: 0.4
         max: 12.0
@@ -113,7 +113,7 @@ genetic:
   mutation_rate: 0.55
   elite_size: 2
   tournament_size: 4
-  min_trades: 150
+  min_trades: 200
   batch_size: 16384
 
   optimizer:
@@ -131,10 +131,10 @@ genetic:
         mixed_precision: true
         max_batch_size: 32768
         memory_strategy:
-          preallocate: false  # Disabilitato per evitare conflitti
+          preallocate: false
           prealloc_threshold: 0.4
-          empty_cache_threshold: 0.85  # Aumentato
-          force_release_threshold: 0.95  # Aumentato
+          empty_cache_threshold: 0.85
+          force_release_threshold: 0.95
     
     cuda_config:
       optimization_level: 3
@@ -148,14 +148,14 @@ genetic:
     min_batch_size: 8192
     max_batch_size: 32768
     memory_limit: 2048
-    prefetch_factor: 1  # Ridotto per minor consumo memoria
-    overlap_transfers: false  # Disabilitato per evitare conflitti
+    prefetch_factor: 1
+    overlap_transfers: false
 
   parallel_config:
     chunk_size: 128
     cuda_streams: 0
     xpu_streams: 1
-    async_loading: false  # Disabilitato per evitare conflitti
+    async_loading: false
     pin_memory: true
     persistent_workers: true
 
@@ -171,7 +171,7 @@ genetic:
     min_rate: 0.1
     max_rate: 0.8
     adaptation_speed: 0.1
-    fitness_threshold: 0.6
+    fitness_threshold: 0.7
     stagnation_threshold: 5
     reset_threshold: 10
     diversity_weight: 0.3
@@ -180,45 +180,45 @@ genetic:
     enabled: true
     parameters:
       momentum_threshold:
-        min: 45
+        min: 55
         max: 85
-        default: 65
+        default: 70
       trend_strength:
-        min: 12
+        min: 15
         max: 30
-        default: 20
+        default: 22
       overbought_level:
-        min: 65
+        min: 70
         max: 85
-        default: 75
+        default: 78
       oversold_level:
         min: 15
-        max: 35
-        default: 25
+        max: 30
+        default: 22
       rsi:
-        timeperiod: 12
+        timeperiod: 14
       stochastic:
-        fastk_period: 12
-        slowk_period: 2
-        slowd_period: 2
+        fastk_period: 14
+        slowk_period: 3
+        slowd_period: 3
       adx:
-        timeperiod: 12
+        timeperiod: 14
 
   pattern_gene:
     enabled: true
     parameters:
       required_patterns:
-        min: 1
+        min: 2
         max: 3
         default: 2
       pattern_window:
-        min: 2
+        min: 3
         max: 5
-        default: 3
+        default: 4
       confirmation_periods:
-        min: 1
+        min: 2
         max: 3
-        default: 1
+        default: 2
     patterns:
       - ENGULFING
       - HAMMER
@@ -235,7 +235,7 @@ genetic:
   restart_mutation_multiplier: 2.0
 
   diversity:
-    top_performer_threshold: 0.75
+    top_performer_threshold: 0.8
     performance_bonus_limit: 0.15
     performance_bonus_multiplier: 0.25
     injection_fraction: 0.3
@@ -246,18 +246,18 @@ genetic:
     max_attempts_multiplier: 2.5
 
   memory_management:
-    preallocation: false  # Disabilitato per evitare conflitti
-    cache_mode: "conservative"  # Cambiato da balanced a conservative
-    release_threshold: 0.85  # Aumentato
-    defrag_threshold: 0.75  # Aumentato
+    preallocation: false
+    cache_mode: "conservative"
+    release_threshold: 0.85
+    defrag_threshold: 0.75
     periodic_gc: true
-    gc_interval: 30  # Ridotto per pulizia più frequente
+    gc_interval: 30
 
   ensemble_weights:
-    base_gene: 0.25
-    volatility_gene: 0.3
-    momentum_gene: 0.3
-    pattern_gene: 0.15
+    base_gene: 0.2
+    volatility_gene: 0.35
+    momentum_gene: 0.35
+    pattern_gene: 0.1
 
   fitness_weights:
     profit_score:
@@ -265,22 +265,22 @@ genetic:
       max_drawdown: 0.3
       sharpe_ratio: 0.4
     quality_score:
-      win_rate: 0.4
-      trade_frequency: 0.3
+      win_rate: 0.5
+      trade_frequency: 0.2
       consistency: 0.3
     final_weights:
-      profit: 0.45
-      quality: 0.4
-      diversity: 0.15
+      profit: 0.4
+      quality: 0.5
+      diversity: 0.1
     penalties:
       max_trades:
-        limit: 400
-        penalty: 0.7
-      max_drawdown:
-        limit: 0.25
+        limit: 300
         penalty: 0.8
+      max_drawdown:
+        limit: 0.2
+        penalty: 0.9
       min_win_rate:
-        limit: 0.45
+        limit: 0.5
         penalty: 0.95
 
 download:

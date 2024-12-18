@@ -7,7 +7,7 @@ from simulate import run_simulation
 from src.utils.config import config
 import os
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class CustomArgumentParser(argparse.ArgumentParser):
