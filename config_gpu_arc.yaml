@@ -24,8 +24,8 @@ system:
       nice_low: 5
       oom_score: 800
     memory:
-      gpu_reserve_pct: 0.20
-      ram_reserve_pct: 0.25
+      gpu_reserve_pct: 0.20  # già in decimale
+      ram_reserve_pct: 0.25  # già in decimale
     batch:
       max_size: 1024
       default_size: 8
@@ -36,9 +36,47 @@ system:
 
 trading:
   position:
-    size_pct: 5  # Modificato da 40 a 5
-    stop_loss_pct: 1.5
-    take_profit_pct: 3.0
+    size_pct: 0.05  # 5%
+    stop_loss_pct: 0.015  # 1.5%
+    take_profit_pct: 0.03  # 3.0%
+
+  risk_management:
+    max_drawdown_pct: 0.15  # già in decimale
+    
+  simulation:
+    batch_size: 16384  # Aumentato per migliori performance
+    adaptive_batch: true  # Abilita batch size adattivo
+    min_batch_size: 8192
+    max_batch_size: 32768
+    
+  mutation:
+    stop_loss:
+      min: 0.005  # 0.5%
+      max: 0.05   # 5.0%
+      std_dev: 0.005  # 0.5%
+    take_profit:
+      min: 0.01   # 1.0%
+      max: 0.10   # 10.0%
+      std_dev: 0.01  # 1.0%
+      multiplier: 1.5
+      
+  defaults:
+    stop_loss_pct: 0.02   # 2.0%
+    take_profit_pct: 0.04  # 4.0%
+    
+  signal_filters:
+    density:
+      min_bars_between: 10
+      max_signals_percent: 0.10  # 10%
+    operator_weights:
+      greater: 0.25  # già in decimale
+      less: 0.25
+      cross_above: 0.25
+      cross_below: 0.25
+    validation:
+      min_trades: 100
+      max_trades: 300
+      min_bars_history: 50
 
   indicators:
     entry:
@@ -64,56 +102,56 @@ trading:
 
     parameters:
       bollinger:
-        num_std: 2.5
+        num_std: 2.8
       rsi:
         epsilon: 1e-10
         scale: 100.0
       macd:
-        fast_period: 12
-        slow_period: 26
-        signal_period: 9
+        fast_period: 8
+        slow_period: 34
+        signal_period: 13
       ema:
-        alpha_multiplier: 2.5
+        alpha_multiplier: 2.0
       ranges:
         timeperiod:
-          min: 8
-          max: 40
+          min: 13
+          max: 55
         fast_period:
           min: 8
-          max: 16
+          max: 21
         slow_period:
-          min: 16
-          max: 32
+          min: 21
+          max: 55
         signal_period:
-          min: 6
-          max: 12
+          min: 8
+          max: 21
 
   volatility_gene:
     enabled: true
     parameters:
       timeperiod:
-        min: 8
-        max: 80
-        default: 14
+        min: 14
+        max: 55
+        default: 21
       multiplier:
-        min: 0.5
-        max: 2.0
+        min: 0.8  # già in decimale
+        max: 1.5  # già in decimale
         default: 1.0
       base_position_size:
-        min: 0.4
-        max: 12.0
-        default: 4.0
+        min: 0.005  # 0.5%
+        max: 0.08   # 8.0%
+        default: 0.02  # 2.0%
       atr_limits:
-        min_size: 0.4
-        max_size: 20.0
+        min_size: 0.005  # 0.5%
+        max_size: 0.10   # 10.0%
 
 genetic:
-  population_size: 80
-  generations: 75
-  mutation_rate: 0.55
-  elite_size: 2
-  tournament_size: 4
-  min_trades: 200
+  population_size: 120
+  generations: 100
+  mutation_rate: 0.35  # già in decimale
+  elite_size: 4
+  tournament_size: 6
+  min_trades: 100
   batch_size: 16384
 
   optimizer:
@@ -132,9 +170,9 @@ genetic:
         max_batch_size: 32768
         memory_strategy:
           preallocate: false
-          prealloc_threshold: 0.4
-          empty_cache_threshold: 0.85
-          force_release_threshold: 0.95
+          prealloc_threshold: 0.4  # già in decimale
+          empty_cache_threshold: 0.85  # già in decimale
+          force_release_threshold: 0.95  # già in decimale
     
     cuda_config:
       optimization_level: 3
@@ -163,38 +201,38 @@ genetic:
     enabled: true
     metrics_interval: 1
     memory_warnings: true
-    threshold_utilization: 0.85
+    threshold_utilization: 0.85  # già in decimale
 
   adaptive_mutation:
     enabled: true
-    initial_rate: 0.55
-    min_rate: 0.1
-    max_rate: 0.8
-    adaptation_speed: 0.1
-    fitness_threshold: 0.7
-    stagnation_threshold: 5
-    reset_threshold: 10
-    diversity_weight: 0.3
+    initial_rate: 0.35  # già in decimale
+    min_rate: 0.15     # già in decimale
+    max_rate: 0.6      # già in decimale
+    adaptation_speed: 0.05  # già in decimale
+    fitness_threshold: 0.8  # già in decimale
+    stagnation_threshold: 8
+    reset_threshold: 15
+    diversity_weight: 0.2  # già in decimale
 
   momentum_gene:
     enabled: true
     parameters:
       momentum_threshold:
-        min: 55
-        max: 85
-        default: 70
+        min: 0.55  # 55%
+        max: 0.85  # 85%
+        default: 0.70  # 70%
       trend_strength:
-        min: 15
-        max: 30
-        default: 22
+        min: 0.15  # 15%
+        max: 0.30  # 30%
+        default: 0.22  # 22%
       overbought_level:
-        min: 70
-        max: 85
-        default: 78
+        min: 0.70  # 70%
+        max: 0.85  # 85%
+        default: 0.78  # 78%
       oversold_level:
-        min: 15
-        max: 30
-        default: 22
+        min: 0.15  # 15%
+        max: 0.30  # 30%
+        default: 0.22  # 22%
       rsi:
         timeperiod: 14
       stochastic:
@@ -227,61 +265,61 @@ genetic:
       - MORNINGSTAR
       - HARAMI
 
-  mutation_decay: 0.985
-  diversity_threshold: 0.35
+  mutation_decay: 0.985  # già in decimale
+  diversity_threshold: 0.35  # già in decimale
   restart_threshold: 6
-  improvement_threshold: 0.003
-  restart_elite_fraction: 0.15
+  improvement_threshold: 0.003  # già in decimale
+  restart_elite_fraction: 0.15  # già in decimale
   restart_mutation_multiplier: 2.0
 
   diversity:
-    top_performer_threshold: 0.8
-    performance_bonus_limit: 0.15
-    performance_bonus_multiplier: 0.25
-    injection_fraction: 0.3
+    top_performer_threshold: 0.85  # già in decimale
+    performance_bonus_limit: 0.2   # già in decimale
+    performance_bonus_multiplier: 0.3  # già in decimale
+    injection_fraction: 0.2  # già in decimale
 
   reproduction:
-    crossover_probability: 0.75
+    crossover_probability: 0.75  # già in decimale
     strong_mutation_multiplier: 1.8
     max_attempts_multiplier: 2.5
 
   memory_management:
     preallocation: false
     cache_mode: "conservative"
-    release_threshold: 0.85
-    defrag_threshold: 0.75
+    release_threshold: 0.85  # già in decimale
+    defrag_threshold: 0.75  # già in decimale
     periodic_gc: true
     gc_interval: 30
 
   ensemble_weights:
-    base_gene: 0.2
-    volatility_gene: 0.35
-    momentum_gene: 0.35
-    pattern_gene: 0.1
+    base_gene: 0.2  # già in decimale
+    volatility_gene: 0.35  # già in decimale
+    momentum_gene: 0.35  # già in decimale
+    pattern_gene: 0.1  # già in decimale
 
   fitness_weights:
     profit_score:
-      total_pnl: 0.3
-      max_drawdown: 0.3
-      sharpe_ratio: 0.4
+      total_pnl: 0.25  # già in decimale
+      max_drawdown: 0.35  # già in decimale
+      sharpe_ratio: 0.4  # già in decimale
     quality_score:
-      win_rate: 0.5
-      trade_frequency: 0.2
-      consistency: 0.3
+      win_rate: 0.6  # già in decimale
+      trade_frequency: 0.1  # già in decimale
+      consistency: 0.3  # già in decimale
     final_weights:
-      profit: 0.4
-      quality: 0.5
-      diversity: 0.1
+      profit: 0.35  # già in decimale
+      quality: 0.6  # già in decimale
+      diversity: 0.05  # già in decimale
     penalties:
       max_trades:
         limit: 300
-        penalty: 0.8
+        penalty: 0.8  # già in decimale
       max_drawdown:
-        limit: 0.2
-        penalty: 0.9
+        limit: 0.2  # già in decimale
+        penalty: 0.9  # già in decimale
       min_win_rate:
-        limit: 0.5
-        penalty: 0.95
+        limit: 0.5  # già in decimale
+        penalty: 0.95  # già in decimale
 
 download:
   symbol: "BTCUSDT"

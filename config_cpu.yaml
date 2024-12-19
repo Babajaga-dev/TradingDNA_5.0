@@ -40,6 +40,27 @@ trading:
     stop_loss_pct: 1.5  # Ridotto da 2.0
     take_profit_pct: 3.0  # Ridotto da 4.0
 
+  risk_management:
+    max_drawdown_pct: 0.15
+    
+  simulation:
+    batch_size: 5000
+    
+  mutation:
+    stop_loss:
+      min: 0.5
+      max: 5.0
+      std_dev: 0.5
+    take_profit:
+      min: 1.0
+      max: 10.0
+      std_dev: 1.0
+      multiplier: 1.5
+      
+  defaults:
+    stop_loss_pct: 2.0
+    take_profit_pct: 4.0
+    
   indicators:
     entry:
       indicator1:

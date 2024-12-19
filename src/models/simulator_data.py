@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 import pandas as pd
 import talib
 import logging
@@ -10,18 +9,22 @@ import os
 
 from .common import TimeFrame
 from .genes.base import TradingGene
+from .genes.indicators import (
+    calculate_sma, calculate_ema, calculate_rsi,
+    calculate_bb_upper, calculate_bb_lower, to_numpy
+)
 from ..utils.config import config
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketState:
-    timestamp: np.ndarray
-    open: np.ndarray
-    high: np.ndarray
-    low: np.ndarray
-    close: np.ndarray
-    volume: np.ndarray
+    timestamp: torch.Tensor
+    open: torch.Tensor
+    high: torch.Tensor
+    low: torch.Tensor
+    close: torch.Tensor
+    volume: torch.Tensor
 
 class MarketDataManager:
     def __init__(self, device_manager):
@@ -123,14 +126,17 @@ class MarketDataManager:
                 missing = [col for col in required_columns if col not in data.columns]
                 raise ValueError(f"Missing required columns in market data: {missing}")
             
-            # Converti in numpy arrays usando float64 per compatibilità con talib
+            # Converti direttamente in tensori torch
+            device = self.device_manager.device
+            dtype = torch.float32
+
             self.market_state = MarketState(
-                timestamp=data['timestamp'].values,
-                open=data['open'].values.astype(np.float64),
-                high=data['high'].values.astype(np.float64),
-                low=data['low'].values.astype(np.float64),
-                close=data['close'].values.astype(np.float64),
-                volume=data['volume'].values.astype(np.float64)
+                timestamp=torch.tensor(data['timestamp'].astype('int64').astype(int).values, device=device),
+                open=torch.tensor(data['open'].values, dtype=dtype, device=device),
+                high=torch.tensor(data['high'].values, dtype=dtype, device=device),
+                low=torch.tensor(data['low'].values, dtype=dtype, device=device),
+                close=torch.tensor(data['close'].values, dtype=dtype, device=device),
+                volume=torch.tensor(data['volume'].values, dtype=dtype, device=device)
             )
             
             # Precalcola indicatori
@@ -147,26 +153,27 @@ class MarketDataManager:
         """Precalcola tutti gli indicatori tecnici necessari"""
         try:
             # Aggiungi prezzo di chiusura alla cache
-            self.indicators_cache["CLOSE"] = self.device_manager.to_tensor(self.market_state.close)
+            self.indicators_cache["CLOSE"] = self.market_state.close
             
             # Calcola indicatori per vari periodi
             for period in TradingGene.VALID_PERIODS:
                 # SMA
-                sma = talib.SMA(self.market_state.close, timeperiod=period)
-                self.indicators_cache[f"SMA_{period}"] = self.device_manager.to_tensor(sma)
+                sma = calculate_sma(self.market_state.close, period)
+                self.indicators_cache[f"SMA_{period}"] = sma
                 
                 # EMA
-                ema = talib.EMA(self.market_state.close, timeperiod=period)
-                self.indicators_cache[f"EMA_{period}"] = self.device_manager.to_tensor(ema)
+                ema = calculate_ema(self.market_state.close, period)
+                self.indicators_cache[f"EMA_{period}"] = ema
                 
                 # RSI
-                rsi = talib.RSI(self.market_state.close, timeperiod=period)
-                self.indicators_cache[f"RSI_{period}"] = self.device_manager.to_tensor(rsi)
+                rsi = calculate_rsi(self.market_state.close, period)
+                self.indicators_cache[f"RSI_{period}"] = rsi
                 
                 # Bollinger Bands
-                upper, _, lower = talib.BBANDS(self.market_state.close, timeperiod=period)
-                self.indicators_cache[f"BB_UPPER_{period}"] = self.device_manager.to_tensor(upper)
-                self.indicators_cache[f"BB_LOWER_{period}"] = self.device_manager.to_tensor(lower)
+                upper = calculate_bb_upper(self.market_state.close, period)
+                lower = calculate_bb_lower(self.market_state.close, period)
+                self.indicators_cache[f"BB_UPPER_{period}"] = upper
+                self.indicators_cache[f"BB_LOWER_{period}"] = lower
             
             logger.info("Successfully precalculated technical indicators")
             logger.debug(f"Available indicators: {list(self.indicators_cache.keys())}")

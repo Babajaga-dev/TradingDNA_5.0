@@ -45,6 +45,8 @@ class TradingGene:
     }
 
     def __init__(self, random_init=True):
+        from ...utils.config import config
+        self.config = config
         self.fitness_score = None
         self.dna = {}
         self.gene_type = GeneType.BASE.value
@@ -77,26 +79,24 @@ class TradingGene:
 
         return {"timeperiod": int(period)}
 
-    def _to_numpy(self, data):
-        """Converte in modo sicuro i dati in numpy array"""
+    def _to_tensor(self, data):
+        """Converte in modo sicuro i dati in torch tensor"""
         try:
             if isinstance(data, torch.Tensor):
-                # Sposta il tensore su CPU e converte in numpy
-                return data.detach().cpu().numpy()
-            elif isinstance(data, np.ndarray):
                 return data
+            elif isinstance(data, np.ndarray):
+                return torch.from_numpy(data)
             else:
-                return np.array(data)
+                return torch.tensor(data)
         except Exception as e:
-            logger.error(f"Error converting to numpy: {str(e)}")
-            if isinstance(data, torch.Tensor):
+            logger.error(f"Error converting to tensor: {str(e)}")
+            if isinstance(data, np.ndarray):
                 shape = data.shape
-                device = data.device
                 dtype = data.dtype
-                logger.error(f"Tensor info - Shape: {shape}, Device: {device}, Dtype: {dtype}")
-            return np.array([])
+                logger.error(f"Array info - Shape: {shape}, Dtype: {dtype}")
+            return torch.tensor([])
 
-    def generate_entry_conditions(self, data: Dict[str, np.ndarray]) -> np.ndarray:
+    def generate_entry_conditions(self, data: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Genera le condizioni di ingresso basate sul DNA"""
         try:
             # Verifica la presenza di tutti i parametri necessari
@@ -104,7 +104,7 @@ class TradingGene:
             if not all(k in self.dna for k in required_keys):
                 missing_keys = [k for k in required_keys if k not in self.dna]
                 logger.error(f"Missing DNA keys: {missing_keys}")
-                return np.zeros(len(next(iter(data.values()))), dtype=bool)
+                return torch.zeros(len(next(iter(data.values()))), dtype=torch.bool)
 
             # Ottieni i parametri e assicurati che siano validi
             ind1 = self.dna["entry_indicator1"]
@@ -132,38 +132,138 @@ class TradingGene:
             if ind1_key not in data or ind2_key not in data:
                 logger.error(f"Indicators not found. Looking for {ind1_key} and {ind2_key}")
                 logger.error(f"Available indicators: {list(data.keys())}")
-                return np.zeros(len(next(iter(data.values()))), dtype=bool)
+                return torch.zeros(len(next(iter(data.values()))), dtype=torch.bool)
 
-            # Ottieni i valori e convertili in numpy arrays
-            values1 = self._to_numpy(data[ind1_key])
-            values2 = self._to_numpy(data[ind2_key])
+            # Ottieni la dimensione corretta dai dati di input
+            expected_size = len(next(iter(data.values())))
+            
+            # Ottieni i valori come tensori e assicurati che siano sullo stesso device
+            values1 = self._to_tensor(data[ind1_key])
+            values2 = self._to_tensor(data[ind2_key])
             
             if len(values1) == 0 or len(values2) == 0:
-                logger.error("Error converting indicator values to numpy arrays")
-                return np.zeros(len(next(iter(data.values()))), dtype=bool)
+                logger.error("Error converting indicator values to tensors")
+                return torch.zeros(expected_size, dtype=torch.bool)
 
-            results = np.zeros_like(values1, dtype=bool)
+            # Determina il device corretto
+            target_device = values1.device
+            values2 = values2.to(target_device)
+            
+            # Crea il tensore dei risultati con la dimensione corretta
+            results = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
 
-            # Genera i segnali
+            # Genera i segnali con controllo densità
             if self.dna["entry_operator"] == Operator.GREATER.value:
-                results[1:] = values1[1:] > values2[1:]
+                # Crea segnali con la dimensione corretta
+                base_signals = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
+                # Assicurati che gli slice abbiano la stessa dimensione
+                n = min(len(values1), len(values2), expected_size)
+                base_signals[1:n] = values1[1:n] > values2[1:n]
+                
+                results = base_signals
             elif self.dna["entry_operator"] == Operator.LESS.value:
-                results[1:] = values1[1:] < values2[1:]
+                # Crea segnali con la dimensione corretta
+                base_signals = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
+                # Assicurati che gli slice abbiano la stessa dimensione
+                n = min(len(values1), len(values2), expected_size)
+                base_signals[1:n] = values1[1:n] < values2[1:n]
+                
+                results = base_signals
             elif self.dna["entry_operator"] == Operator.CROSS_ABOVE.value:
-                results[1:] = (values1[:-1] <= values2[:-1]) & (values1[1:] > values2[1:])
+                # Crea segnali con la dimensione corretta
+                cross_above = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
+                # Assicurati che gli slice abbiano la stessa dimensione
+                n = min(len(values1)-1, len(values2)-1, expected_size-1)
+                cross_above[1:n+1] = (values1[:n] <= values2[:n]) & (values1[1:n+1] > values2[1:n+1])
+                results = cross_above
             elif self.dna["entry_operator"] == Operator.CROSS_BELOW.value:
-                results[1:] = (values1[:-1] >= values2[:-1]) & (values1[1:] < values2[1:])
+                # Crea segnali con la dimensione corretta
+                cross_below = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
+                # Assicurati che gli slice abbiano la stessa dimensione
+                n = min(len(values1)-1, len(values2)-1, expected_size-1)
+                cross_below[1:n+1] = (values1[:n] >= values2[:n]) & (values1[1:n+1] < values2[1:n+1])
+                results = cross_below
 
+            # Applica il filtro di densità
+            total_signals = torch.sum(results).item()
+            if total_signals == 0:
+                return results
+                
+            # Ottieni e valida i parametri dal config con limiti di sicurezza
+            min_bars_between = max(self.config.get("trading.signal_filters.density.min_bars_between", 10), 5)
+            max_signals_percent = min(self.config.get("trading.signal_filters.density.max_signals_percent", 5), 10)
+            # Imposta un limite massimo assoluto al numero di segnali
+            max_signals_absolute = 1000
+            max_signals_per_period = min(len(results) * max_signals_percent // 100, max_signals_absolute)
+            
+            # Log dei parametri di filtro
+            logger.debug(f"Signal density parameters:")
+            logger.debug(f"- Min bars between signals: {min_bars_between}")
+            logger.debug(f"- Max signals percent: {max_signals_percent}%")
+            logger.debug(f"- Max signals allowed: {max_signals_per_period}")
+            
+            # Ottieni gli indici dei segnali e gestisci il caso di tensore 0-d
+            signal_indices = torch.nonzero(results)
+            if signal_indices.dim() == 0:
+                return results
+            
+            # Converti in lista di indici
+            signal_indices = signal_indices.squeeze()
+            if signal_indices.dim() == 0:  # Se c'è un solo segnale
+                indices_list = [signal_indices.item()]
+            else:
+                indices_list = signal_indices.tolist()
+            
+            if not indices_list:
+                return results
+                
+            # Usa la distanza minima più grande tra min_bars_between e la distanza basata su max_signals
+            min_distance = max(min_bars_between, len(results) // max_signals_per_period)
+            
+            # Seleziona i segnali mantenendo la distanza minima e il numero massimo
+            keep_indices = [indices_list[0]]  # Mantieni il primo segnale
+            for idx in indices_list[1:]:
+                # Verifica sia la distanza minima che il limite massimo
+                if idx - keep_indices[-1] >= min_distance and len(keep_indices) < max_signals_per_period:
+                    keep_indices.append(idx)
+                if len(keep_indices) >= max_signals_per_period:
+                    break
+            
+            # Se abbiamo troppi segnali, riduci uniformemente
+            if len(keep_indices) > max_signals_per_period:
+                keep_step = len(keep_indices) // max_signals_per_period
+                keep_indices = keep_indices[::keep_step][:max_signals_per_period]
+            
+            # Crea il nuovo tensore di risultati con la dimensione corretta
+            new_results = torch.zeros(expected_size, dtype=torch.bool, device=target_device)
+            # Assicurati che gli indici siano validi
+            valid_indices = [idx for idx in keep_indices if idx < expected_size]
+            new_results[valid_indices] = True
+            
+            # Log del risultato del filtraggio
+            logger.info(f"Signal filtering results:")
+            logger.info(f"- Original signals: {total_signals}")
+            logger.info(f"- Filtered signals: {len(valid_indices)}")
+            logger.info(f"- Min distance used: {min_distance}")
+            
+            results = new_results
+                
+            # Assicurati che il risultato abbia la dimensione corretta
+            if len(results) != len(next(iter(data.values()))):
+                logger.error(f"Dimension mismatch: results {len(results)} != data {len(next(iter(data.values())))}")
+                return torch.zeros(len(next(iter(data.values()))), dtype=torch.bool)
+            
+            # Il risultato è già un tensor
             return results
             
         except KeyError as e:
             logger.error(f"KeyError in generate_entry_conditions: {str(e)}")
             logger.error(f"DNA: {self.dna}")
-            return np.zeros(len(next(iter(data.values()))), dtype=bool)
+            return torch.zeros(len(next(iter(data.values()))), dtype=torch.bool)
         except Exception as e:
             logger.error(f"Error in generate_entry_conditions: {str(e)}")
             logger.error(traceback.format_exc())
-            return np.zeros(len(next(iter(data.values()))), dtype=bool)
+            return torch.zeros(len(next(iter(data.values()))), dtype=torch.bool)
 
     def _get_common_indicator_pair(self) -> Tuple[str, str]:
         """Restituisce coppie comuni di indicatori"""
@@ -192,9 +292,24 @@ class TradingGene:
                 "entry_indicator1_params": self._get_indicator_params(ind1),
                 "entry_indicator2": ind2,
                 "entry_indicator2_params": self._get_indicator_params(ind2),
-                "entry_operator": np.random.choice([op.value for op in Operator]),
-                "stop_loss_pct": float(np.random.uniform(0.5, 5.0)),
-                "take_profit_pct": float(np.random.uniform(1.0, 10.0))
+                # Usa probabilità dal config per gli operatori
+                "entry_operator": np.random.choice(
+                    [op.value for op in Operator],
+                    p=[
+                        self.config.get("trading.signal_filters.operator_weights.greater", 0.15),
+                        self.config.get("trading.signal_filters.operator_weights.less", 0.15),
+                        self.config.get("trading.signal_filters.operator_weights.cross_above", 0.35),
+                        self.config.get("trading.signal_filters.operator_weights.cross_below", 0.35)
+                    ]
+                ),
+                "stop_loss_pct": float(np.random.uniform(
+                    self.config.get("trading.mutation.stop_loss.min", 0.5),
+                    self.config.get("trading.mutation.stop_loss.max", 5.0)
+                )),
+                "take_profit_pct": float(np.random.uniform(
+                    self.config.get("trading.mutation.take_profit.min", 1.0),
+                    self.config.get("trading.mutation.take_profit.max", 10.0)
+                ))
             }
             
             logger.debug(f"Randomized DNA: {self.dna}")
@@ -204,15 +319,15 @@ class TradingGene:
             self.load_default_dna()
 
     def load_default_dna(self):
-        """Load default DNA configuration with medium-term periods"""
+        """Load default DNA configuration from config file"""
         self.dna = {
             "entry_indicator1": "SMA",
             "entry_indicator1_params": {"timeperiod": 21},
             "entry_indicator2": "SMA", 
             "entry_indicator2_params": {"timeperiod": 55},
             "entry_operator": "cross_above",
-            "stop_loss_pct": 2.0,
-            "take_profit_pct": 4.0
+            "stop_loss_pct": self.config.get("trading.defaults.stop_loss_pct", 2.0),
+            "take_profit_pct": self.config.get("trading.defaults.take_profit_pct", 4.0)
         }
 
     def mutate(self, mutation_rate: float = 0.1):
@@ -254,20 +369,27 @@ class TradingGene:
                         # Mutazione dei parametri percentuali con limiti
                         if "stop_loss" in key:
                             current = float(self.dna[key])
-                            # Mutazione gaussiana con limiti
-                            delta = np.random.normal(0, 0.5)  # std=0.5%
+                            # Mutazione gaussiana con limiti dal config
+                            std_dev = self.config.get("trading.mutation.stop_loss.std_dev", 0.5)
+                            min_val = self.config.get("trading.mutation.stop_loss.min", 0.5)
+                            max_val = self.config.get("trading.mutation.stop_loss.max", 5.0)
+                            delta = np.random.normal(0, std_dev)
                             new_value = current + delta
-                            self.dna[key] = float(np.clip(new_value, 0.5, 5.0))
+                            self.dna[key] = float(np.clip(new_value, min_val, max_val))
                         elif "take_profit" in key:
                             current = float(self.dna[key])
-                            delta = np.random.normal(0, 1.0)  # std=1.0%
+                            std_dev = self.config.get("trading.mutation.take_profit.std_dev", 1.0)
+                            min_val = self.config.get("trading.mutation.take_profit.min", 1.0)
+                            max_val = self.config.get("trading.mutation.take_profit.max", 10.0)
+                            delta = np.random.normal(0, std_dev)
                             new_value = current + delta
-                            self.dna[key] = float(np.clip(new_value, 1.0, 10.0))
+                            self.dna[key] = float(np.clip(new_value, min_val, max_val))
                             
                         # Mantiene take_profit > stop_loss
                         if "stop_loss_pct" in self.dna and "take_profit_pct" in self.dna:
                             if self.dna["take_profit_pct"] <= self.dna["stop_loss_pct"]:
-                                self.dna["take_profit_pct"] = self.dna["stop_loss_pct"] * 1.5
+                                multiplier = self.config.get("trading.mutation.take_profit.multiplier", 1.5)
+                                self.dna["take_profit_pct"] = self.dna["stop_loss_pct"] * multiplier
                     
                     logger.debug(f"Mutated {key}: {self.dna[key]}")
                     
@@ -303,4 +425,3 @@ class TradingGene:
             
         except Exception as e:
             logger.error(f"Error in crossover: {str(e)}")
-            return TradingGene(random_init=True)

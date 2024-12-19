@@ -1,6 +1,6 @@
 import logging
 import gc
-import numpy as np
+import torch
 from typing import Optional, Tuple
 from datetime import datetime
 
@@ -74,6 +74,7 @@ class ParallelGeneticOptimizer:
             
             for generation in range(self.generations):
                 generation_start = datetime.now()
+                logger.info("#" * 80)
                 logger.info(f"Generation {generation + 1}/{self.generations}")
                 
                 # Monitora performance se necessario
@@ -107,7 +108,7 @@ class ParallelGeneticOptimizer:
                     "generation": generation + 1,
                     "best_fitness": best_gen_fitness,
                     "avg_fitness": sum(fitness_scores) / len(fitness_scores) if fitness_scores else 0.0,
-                    "std_fitness": float(np.std(fitness_scores)) if fitness_scores else 0.0,
+                    "std_fitness": float(torch.std(torch.tensor(fitness_scores)).item()) if fitness_scores else 0.0,
                     "diversity": current_diversity,
                     "mutation_rate": current_mutation_rate,
                     "plateau_length": plateau_length,
@@ -149,6 +150,10 @@ class ParallelGeneticOptimizer:
                 if generation % 10 == 0:
                     if self.device_manager.use_gpu:
                         self.device_manager.manage_memory()
+                        if hasattr(torch, 'cuda'):
+                            torch.cuda.empty_cache()
+                        elif hasattr(torch, 'xpu'):
+                            torch.xpu.empty_cache()
                     else:
                         gc.collect()
             
