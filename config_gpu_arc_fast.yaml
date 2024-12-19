@@ -1,0 +1,101 @@
+simulator:
+  initial_capital: 10000
+  min_candles: 50
+  data_file: "market_data_BTC_1m"
+
+trading:
+  position:
+    size_pct: 0.05
+    stop_loss_pct: 0.015
+    take_profit_pct: 0.03
+
+  risk_management:
+    max_drawdown_pct: 0.15
+    
+  simulation:
+    batch_size: 16384
+    adaptive_batch: true
+    min_batch_size: 8192
+    max_batch_size: 32768
+    
+  signal_filters:
+    density:
+      min_bars_between: 5  # Ridotto da 10
+      max_signals_percent: 0.20  # Aumentato da 0.10
+    validation:
+      min_trades: 50  # Ridotto da 100
+      max_trades: 300
+      min_bars_history: 50
+
+  indicators:
+    entry:
+      indicator1:
+        type: "EMA"
+        params:
+          timeperiod: 25
+      indicator2:
+        type: "EMA"
+        params:
+          timeperiod: 50
+      operator: "cross_above"
+
+genetic:
+  population_size: 60  # Ridotto da 120
+  generations: 30  # Ridotto da 100
+  mutation_rate: 0.35
+  elite_size: 4
+  tournament_size: 6
+  min_trades: 50  # Ridotto da 100
+  batch_size: 16384
+
+  optimizer:
+    gpu_backend: "arc"
+    use_gpu: true
+    torch_threads: 6
+    device_config:
+      precision: "float32"
+      arc:
+        enabled: true
+        precision: "float32"
+        memory_reserve: 2048
+        mixed_precision: true
+        max_batch_size: 32768
+
+  batch_processing:
+    enabled: true
+    adaptive_batching: true
+    min_batch_size: 8192
+    max_batch_size: 32768
+    memory_limit: 2048
+
+  performance_monitoring:
+    enabled: true
+    metrics_interval: 1
+    memory_warnings: true
+    threshold_utilization: 0.85
+
+  adaptive_mutation:
+    enabled: true
+    initial_rate: 0.35
+    min_rate: 0.15
+    max_rate: 0.6
+    adaptation_speed: 0.05
+    fitness_threshold: 0.8
+    stagnation_threshold: 8
+    reset_threshold: 15
+    diversity_weight: 0.2
+
+  memory_management:
+    preallocation: false
+    cache_mode: "conservative"
+    release_threshold: 0.85
+    defrag_threshold: 0.75
+    periodic_gc: true
+    gc_interval: 30
+
+download:
+  symbol: "BTCUSDT"
+  interval: "1m"
+  start_date: "2023-06-01"
+  end_date: null
+  output_folder: "data"

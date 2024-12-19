@@ -203,14 +203,11 @@ class SimulationProcessor:
         """Calcola le variazioni percentuali dei prezzi"""
         price_changes = torch.zeros_like(entry_prices)
         if torch.any(active_mask):
-            # Espandi current_price per il broadcasting
-            current_prices = current_price.expand_as(entry_prices)
-            # Calcola variazioni percentuali per tutte le posizioni
-            # Evita divisione per zero usando una maschera
-            valid_entries = entry_prices != 0
-            price_changes[valid_entries] = ((current_prices[valid_entries] - entry_prices[valid_entries]) / entry_prices[valid_entries])
-            
-            # Rimuovo il log qui poiché è già presente nel ciclo principale
+            # Calcola variazioni percentuali solo per le posizioni attive
+            valid_entries = (entry_prices != 0) & active_mask
+            if torch.any(valid_entries):
+                # Calcola direttamente senza expand_as
+                price_changes[valid_entries] = (current_price - entry_prices[valid_entries]) / entry_prices[valid_entries]
         return price_changes
             
     def _initialize_output_tensors(

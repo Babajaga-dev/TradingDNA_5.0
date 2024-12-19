@@ -1,7 +1,7 @@
 simulator:
   initial_capital: 10000
   min_candles: 50
-  data_file: "market_data_BTC_1m"
+  data_file: "market_data_BTC_1m_1M"
   metrics:
     returns_limit: 10.0
     min_equity: 1e-6
@@ -324,7 +324,7 @@ genetic:
 download:
   symbol: "BTCUSDT"
   interval: "1m"
-  start_date: "2023-06-01"
+  start_date: "2024-12-01"
   end_date: null
   batch_size: 1000
   output_folder: "data"

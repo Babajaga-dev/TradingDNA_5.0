@@ -7,8 +7,46 @@ from simulate import run_simulation
 from src.utils.config import config
 import os
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+def setup_logging(debug: bool = False):
+    """Configura il sistema di logging"""
+    level = logging.DEBUG if debug else logging.INFO
+    
+    # Formatter condiviso per tutti i logger
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        '%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Configura il logger del CLI
+    cli_logger = logging.getLogger(__name__)
+    cli_logger.setLevel(level)
+    cli_logger.propagate = False
+    cli_logger.handlers = []
+    cli_handler = logging.StreamHandler()
+    cli_handler.setFormatter(formatter)
+    cli_handler.setLevel(level)
+    cli_logger.addHandler(cli_handler)
+
+    # Configura i logger dei moduli principali
+    loggers = [
+        'src.models.simulator',
+        'src.models.simulator_processor',
+        'src.models.position_manager',
+        'src.optimization.genetic_optimizer',
+        'src.optimization.genetic_evaluation',
+        'src.optimization.genetic_monitoring',
+        'src.models.genes.base'
+    ]
+    
+    for logger_name in loggers:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(level)
+        logger.propagate = False  # Disabilita propagazione al parent logger
+        logger.handlers = []  # Rimuovi handler esistenti
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        handler.setLevel(level)
+        logger.addHandler(handler)
 
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -47,9 +85,11 @@ def main():
     """Funzione principale per il CLI"""
     parser = CustomArgumentParser(description='Trading System CLI')
     
-    # Argomento globale per il file di configurazione (obbligatorio)
+    # Argomenti globali
     parser.add_argument('--config', required=True,
                        help='Percorso del file di configurazione (obbligatorio)')
+    parser.add_argument('--debug', action='store_true',
+                       help='Attiva il logging in modalità debug')
     
     subparsers = parser.add_subparsers(dest='command', required=True)
 
@@ -77,13 +117,16 @@ def main():
     args = parser.parse_args()
 
     try:
+        # Setup logging
+        setup_logging(args.debug)
+        
         # Carica la configurazione dal file specificato
         config.load_config(args.config)
         
         start_time = datetime.now()
         
         if args.command == 'evolve':
-            logger.info("Starting evolution process...")
+            logging.getLogger(__name__).info("Starting evolution process...")
             print(f"\nConfigurazione caricata da {args.config}")
             print_config()
             
@@ -111,8 +154,8 @@ def main():
                     population_size=population_size
                 )
             except Exception as e:
-                logger.error(f"Error during evolution: {str(e)}")
-                logger.error(traceback.format_exc())
+                logging.getLogger(__name__).error(f"Error during evolution: {str(e)}")
+                logging.getLogger(__name__).error(traceback.format_exc())
                 raise
             
         elif args.command == 'simulate':
@@ -129,8 +172,8 @@ def main():
         print(f"\nCompleted in {elapsed.total_seconds():.2f} seconds")
 
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
-        logger.error(traceback.format_exc())
+        logging.getLogger(__name__).error(f"Error in main: {str(e)}")
+        logging.getLogger(__name__).error(traceback.format_exc())
         raise
 
 if __name__ == '__main__':

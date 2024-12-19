@@ -57,7 +57,7 @@ class PositionManager:
         max_drawdown_hit: bool
     ) -> torch.Tensor:
         """
-        Verifica le condizioni di chiusura per le posizioni attive
+        Verifica le condizioni di chiusura per le posizioni attive usando operazioni vettorizzate
         
         Args:
             price_changes: Variazioni percentuali dei prezzi
@@ -67,42 +67,34 @@ class PositionManager:
         Returns:
             Maschera booleana delle posizioni da chiudere
         """
-        # Verifica solo posizioni attive
-        if not torch.any(active_positions):
+        # Se non ci sono posizioni attive o max_drawdown, ritorna subito
+        if not torch.any(active_positions) and not max_drawdown_hit:
             return torch.zeros_like(active_positions)
             
-        # Verifica solo posizioni attive
+        # Crea la maschera di chiusura usando operazioni vettorizzate
         close_mask = torch.zeros_like(active_positions)
         
         # Applica le condizioni solo alle posizioni attive
-        active_indices = torch.nonzero(active_positions)
-        for idx in active_indices:
-            t, slot = idx[0], idx[1]
-            # Verifica stop loss e take profit
-            if price_changes[t, slot] <= -self.stop_loss_pct or \
-               price_changes[t, slot] >= self.take_profit_pct or \
-               max_drawdown_hit:
-                close_mask[t, slot] = True
-        
-        # Debug log
-        if torch.any(close_mask):
-            logger.debug(f"Close conditions triggered:")
-            logger.debug(f"Active positions: {active_positions.tolist()}")
-            logger.debug(f"Price changes: {price_changes.tolist()}")
-            logger.debug(f"Close mask: {close_mask.tolist()}")
+        if torch.any(active_positions):
+            # Verifica stop loss e take profit in modo vettorizzato
+            stop_loss_mask = price_changes <= -self.stop_loss_pct
+            take_profit_mask = price_changes >= self.take_profit_pct
             
-            # Log dettagliato per ogni posizione chiusa
-            closed_positions = torch.nonzero(close_mask)
-            for pos in closed_positions:
-                t, slot = pos[0].item(), pos[1].item()
-                logger.debug(f"Closing position at t={t}, slot={slot}:")
-                logger.debug(f"Price change: {price_changes[t, slot]:.2%}")
-                if price_changes[t, slot] <= -self.stop_loss_pct:
-                    logger.debug("Reason: Stop Loss")
-                elif price_changes[t, slot] >= self.take_profit_pct:
-                    logger.debug("Reason: Take Profit")
-                elif max_drawdown_hit:
-                    logger.debug("Reason: Max Drawdown")
+            # Combina le condizioni
+            close_mask = (stop_loss_mask | take_profit_mask) & active_positions
+            
+            # Applica max_drawdown se necessario
+            if max_drawdown_hit:
+                close_mask = close_mask | active_positions
+        
+            # Debug log
+            if torch.any(close_mask):
+                logger.debug("Close conditions triggered:")
+                logger.debug(f"Active positions: {torch.sum(active_positions).item()}")
+                logger.debug(f"Stop loss hits: {torch.sum(stop_loss_mask & active_positions).item()}")
+                logger.debug(f"Take profit hits: {torch.sum(take_profit_mask & active_positions).item()}")
+                if max_drawdown_hit:
+                    logger.debug("Max drawdown triggered")
         
         return close_mask
         
@@ -114,7 +106,7 @@ class PositionManager:
         initial_capital: float
     ) -> torch.Tensor:
         """
-        Calcola il P&L per le posizioni chiuse
+        Calcola il P&L per le posizioni chiuse usando operazioni vettorizzate
         
         Args:
             price_changes: Variazioni percentuali dei prezzi
@@ -125,26 +117,23 @@ class PositionManager:
         Returns:
             P&L calcolato per le posizioni chiuse
         """
-        # Calcola P&L solo per le posizioni che stiamo chiudendo
-        pnl = torch.zeros_like(price_changes)
-        if torch.any(close_mask):
-            # Calcola il valore in dollari delle posizioni usando le variazioni già in decimale
-            pct_changes = price_changes.clone()
-            position_value = position_sizes * initial_capital
+        # Se non ci sono posizioni da chiudere, ritorna subito
+        if not torch.any(close_mask):
+            return torch.zeros_like(price_changes)
             
-            # Applica la maschera e calcola il P&L
-            pct_changes.masked_fill_(~close_mask, 0)
-            position_value.masked_fill_(~close_mask, 0)
-            pnl = pct_changes * position_value
-            
-            # Debug log
-            closed_positions = torch.nonzero(close_mask)
-            for pos in closed_positions:
-                t, slot = pos[0].item(), pos[1].item()
-                logger.debug(f"PnL calculation for position at t={t}, slot={slot}:")
-                logger.debug(f"Price change: {price_changes[t, slot]:.2%}")
-                logger.debug(f"Position size: ${position_value[t, slot]:.2f}")
-                logger.debug(f"PnL: ${pnl[t, slot]:.2f}")
+        # Calcola il P&L in modo vettorizzato
+        position_value = position_sizes * initial_capital
+        pnl = torch.where(close_mask, price_changes * position_value, torch.zeros_like(price_changes))
+        
+        # Debug log
+        if logger.isEnabledFor(logging.DEBUG):
+            total_closed = torch.sum(close_mask).item()
+            total_pnl = torch.sum(pnl).item()
+            avg_price_change = torch.sum(price_changes * close_mask).item() / total_closed if total_closed > 0 else 0
+            logger.debug(f"PnL calculation summary:")
+            logger.debug(f"Closed positions: {total_closed}")
+            logger.debug(f"Average price change: {avg_price_change:.2%}")
+            logger.debug(f"Total PnL: ${total_pnl:.2f}")
             
         return pnl
         
@@ -156,7 +145,7 @@ class PositionManager:
         initial_capital: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Trova gli slot disponibili per nuove posizioni
+        Trova gli slot disponibili per nuove posizioni usando operazioni vettorizzate
         
         Args:
             entry_signals: Segnali di entrata
@@ -176,38 +165,26 @@ class PositionManager:
             return torch.tensor([], dtype=torch.long, device=device), \
                    torch.tensor([], dtype=torch.long, device=device)
         
-        # Verifica segnali di entrata
-        entry_rows = entry_signals.nonzero(as_tuple=True)[0]
-        if len(entry_rows) == 0:
-            return torch.tensor([], dtype=torch.long, device=device), \
-                   torch.tensor([], dtype=torch.long, device=device)
-        
-        # Verifica posizioni disponibili
+        # Verifica segnali di entrata e posizioni disponibili in modo vettorizzato
         active_count = active_positions.sum(dim=1)
-        can_open = active_count < self.max_positions
+        can_open = (active_count < self.max_positions) & entry_signals
         
-        # Filtra solo le righe dove possiamo aprire posizioni
-        valid_rows = []
-        slot_indices = []
-        
-        for row_idx in entry_rows:
-            if can_open[row_idx]:
-                # Trova il primo slot libero
-                free_slots = (~active_positions[row_idx]).nonzero(as_tuple=True)[0]
-                if len(free_slots) > 0:
-                    valid_rows.append(row_idx.item())
-                    slot_indices.append(free_slots[0].item())
-                    
-                    # Debug log
-                    logger.debug(f"Found entry slot:")
-                    logger.debug(f"Row: {row_idx.item()}")
-                    logger.debug(f"Slot: {free_slots[0].item()}")
-                    logger.debug(f"Active positions: {active_positions[row_idx].sum().item()}")
-                    logger.debug(f"Position value: ${position_value:.2f}")
-        
-        if not valid_rows:
+        if not torch.any(can_open):
             return torch.tensor([], dtype=torch.long, device=device), \
                    torch.tensor([], dtype=torch.long, device=device)
-                   
-        return torch.tensor(valid_rows, dtype=torch.long, device=device), \
-               torch.tensor(slot_indices, dtype=torch.long, device=device)
+        
+        # Trova le righe valide
+        valid_rows = can_open.nonzero(as_tuple=True)[0]
+        
+        # Trova gli slot liberi per ogni riga valida
+        slot_indices = torch.zeros_like(valid_rows)
+        for i, row in enumerate(valid_rows):
+            # Prendi il primo slot libero
+            slot_indices[i] = (~active_positions[row]).nonzero(as_tuple=True)[0][0]
+        
+        # Debug log
+        if len(valid_rows) > 0:
+            logger.debug(f"Found {len(valid_rows)} entry slots")
+            logger.debug(f"Position value: ${position_value:.2f}")
+        
+        return valid_rows, slot_indices

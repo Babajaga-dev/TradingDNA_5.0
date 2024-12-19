@@ -15,7 +15,6 @@ from src.models.simulator import TradingSimulator
 from src.optimization.genetic_optimizer import ParallelGeneticOptimizer
 from src.utils.config import config
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def calculate_linear_regression(x: np.ndarray, y: np.ndarray) -> Tuple[float, float, float]:
