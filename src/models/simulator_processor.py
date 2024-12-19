@@ -68,10 +68,18 @@ class SimulationProcessor:
                 
             logger.info(f"Found {total_signals} total entry signals")
             
+            # Validazione prezzi
+            if not torch.isfinite(prices).all():
+                logger.error("Invalid prices detected (inf or nan values)")
+                return self._get_empty_tensors(len(prices), initial_capital)
+                
             # Setup
             prices = prices.to(self.compute_dtype)
             device = prices.device
             size = len(prices)
+            
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Price range: min=${torch.min(prices).item():.8f}, max=${torch.max(prices).item():.8f}")
             
             # Inizializza tensori
             position_tensors = self.position_manager.initialize_position_tensors(
@@ -110,7 +118,7 @@ class SimulationProcessor:
                         price_diff = abs(prices[t] - prices[t-1]).item() if t > 0 else 0
                         if price_diff > 0.01:  # Log solo se il prezzo cambia più di 0.01
                             logger.debug(
-                                f"t={t} - Price: ${prices[t]:.2f} ({price_diff:+.2f}), "
+                                f"t={t} - Price: ${prices[t].item():.8f} ({price_diff:+.8f}), "
                                 f"Active: {torch.sum(active_mask).item()}, "
                                 f"Changes: {price_changes[active_mask].tolist()}"
                             )
@@ -135,12 +143,12 @@ class SimulationProcessor:
                         # Aggiorna equity e PnL
                         total_pnl = pnl_result.sum().item()
                         current_equity += total_pnl
-                        output["pnl"][t] = total_pnl
+                        output["pnl"][t] = pnl_result  # Assegna il PnL individuale per ogni posizione
                         
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(
                                 f"t={t} - Closed positions: {torch.sum(close_positions).item()}, "
-                                f"PnL: ${total_pnl:+.2f}, Equity: ${current_equity:.2f}"
+                                f"PnL: ${total_pnl:+.8f}, Equity: ${current_equity:.8f}"
                             )
                         
                         # Azzera posizioni chiuse
@@ -159,11 +167,22 @@ class SimulationProcessor:
                             free_slots = (~position_tensors["active_positions"][t:t+1]).nonzero(as_tuple=True)[1]  # Usa l'indice 1 per gli slot
                             if len(free_slots) > 0:
                                 slot_idx = free_slots[0]
+                                # Log debug prima della validazione
+                                if logger.isEnabledFor(logging.DEBUG):
+                                    logger.debug(
+                                        f"t={t} - Attempting to open position: "
+                                        f"equity=${current_equity:.8f}, "
+                                        f"position_size={self.position_manager.position_size_pct:.1%}, "
+                                        f"position_value=${current_equity * self.position_manager.position_size_pct:.8f}"
+                                    )
+                                
                                 # Verifica validità della posizione
-                                if self.risk_manager.validate_position_size(
+                                position_valid = self.risk_manager.validate_position_size(
                                     self.position_manager.position_size_pct, 
                                     current_equity
-                                ):
+                                )
+                                
+                                if position_valid:
                                     # Apri nuova posizione
                                     position_tensors["active_positions"][t:t+1, slot_idx] = True
                                     position_tensors["entry_prices"][t:t+1, slot_idx] = prices[t]
@@ -171,19 +190,19 @@ class SimulationProcessor:
                                     
                                     if logger.isEnabledFor(logging.DEBUG):
                                         logger.debug(
-                                            f"t={t} - New position: price=${prices[t]:.2f}, "
+                                            f"t={t} - New position: price=${prices[t].item():.8f}, "
                                             f"size={self.position_manager.position_size_pct:.1%}"
                                         )
                                 else:
                                     if logger.isEnabledFor(logging.DEBUG):
                                         logger.debug(
-                                            f"t={t} - Invalid position size for equity ${current_equity:.2f}"
+                                            f"t={t} - Invalid position size for equity ${current_equity:.8f}"
                                         )
                 
                 # Aggiorna output tensors
                 output["position_active"][t] = position_tensors["active_positions"][t]  # Copia direttamente la riga delle posizioni
-                output["entry_prices"][t] = position_tensors["entry_prices"][t:t+1].sum()
-                output["position_sizes"][t] = position_tensors["position_sizes"][t:t+1].sum()
+                output["entry_prices"][t] = position_tensors["entry_prices"][t]  # Copia direttamente i prezzi
+                output["position_sizes"][t] = position_tensors["position_sizes"][t]  # Copia direttamente le size
                 output["equity"][t] = current_equity
             
             # Calcola statistiche finali
@@ -216,8 +235,9 @@ class SimulationProcessor:
             # Calcola variazioni percentuali solo per le posizioni attive
             valid_entries = (entry_prices != 0) & active_mask
             if torch.any(valid_entries):
-                # Calcola direttamente senza expand_as
-                price_changes[valid_entries] = (current_price - entry_prices[valid_entries]) / entry_prices[valid_entries]
+                # Espandi current_price per il calcolo vettorizzato
+                current_prices = current_price.expand_as(entry_prices)
+                price_changes[valid_entries] = (current_prices[valid_entries] - entry_prices[valid_entries]) / entry_prices[valid_entries]
         return price_changes
             
     def _initialize_output_tensors(
@@ -229,9 +249,9 @@ class SimulationProcessor:
         """Inizializza i tensori di output"""
         return {
             "position_active": torch.zeros((size, self.position_manager.max_positions), dtype=torch.bool, device=device),
-            "entry_prices": torch.zeros(size, dtype=self.compute_dtype, device=device),
-            "position_sizes": torch.zeros(size, dtype=self.compute_dtype, device=device),
-            "pnl": torch.zeros(size, dtype=self.compute_dtype, device=device),
+            "entry_prices": torch.zeros((size, self.position_manager.max_positions), dtype=self.compute_dtype, device=device),
+            "position_sizes": torch.zeros((size, self.position_manager.max_positions), dtype=self.compute_dtype, device=device),
+            "pnl": torch.zeros((size, self.position_manager.max_positions), dtype=self.compute_dtype, device=device),
             "equity": torch.ones(size, dtype=self.compute_dtype, device=device) * initial_capital
         }
         
@@ -245,16 +265,16 @@ class SimulationProcessor:
         logger.info("-" * 80)
         logger.info(f"Simulation completed:")
         logger.info(f"\nPerformance:")
-        logger.info(f"- Initial capital: ${self.initial_capital:.2f}")
-        logger.info(f"- Final equity: ${stats['final_equity']:.2f}")
-        logger.info(f"- Total P&L: ${stats['total_pl']:.2f} ({stats['pl_percentage']:.2f}%)")
-        logger.info(f"- Max drawdown: {stats['max_drawdown']:.2f}%")
+        logger.info(f"- Initial capital: ${self.initial_capital:.8f}")
+        logger.info(f"- Final equity: ${stats['final_equity']:.8f}")
+        logger.info(f"- Total P&L: ${stats['total_pl']:.8f} ({stats['pl_percentage']:.8f}%)")
+        logger.info(f"- Max drawdown: {stats['max_drawdown']:.8f}%")
         logger.info(f"\nTrades:")
         logger.info(f"- Total trades: {stats['total_trades']}")
         logger.info(f"- Winning trades: {stats['winning_trades']}")
         logger.info(f"- Losing trades: {stats['losing_trades']}")
-        logger.info(f"- Win rate: {stats['win_rate']:.1f}%")
-        logger.info(f"- Average win: ${stats['avg_win']:.2f}")
-        logger.info(f"- Average loss: ${stats['avg_loss']:.2f}")
-        logger.info(f"- Profit factor: {stats['profit_factor']:.2f}")
+        logger.info(f"- Win rate: {stats['win_rate']:.8f}%")
+        logger.info(f"- Average win: ${stats['avg_win']:.8f}")
+        logger.info(f"- Average loss: ${stats['avg_loss']:.8f}")
+        logger.info(f"- Profit factor: {stats['profit_factor']:.8f}")
         logger.info(f"- Max concurrent positions: {stats['max_concurrent_positions']}")

@@ -6,8 +6,8 @@ simulator:
 trading:
   position:
     size_pct: 0.05
-    stop_loss_pct: 0.015
-    take_profit_pct: 0.03
+    stop_loss_pct: 0.02  # Aumentato a 2.0%
+    take_profit_pct: 0.05  # Aumentato a 5.0%
 
   risk_management:
     max_drawdown_pct: 0.15
@@ -20,10 +20,15 @@ trading:
     
   signal_filters:
     density:
-      min_bars_between: 5  # Ridotto da 10
-      max_signals_percent: 0.20  # Aumentato da 0.10
+      min_bars_between: 20  # Aumentato da 5
+      max_signals_percent: 0.003  # Ridotto a 0.3%
+    operator_weights:  # Aggiunta sezione
+      greater: 0.15
+      less: 0.15
+      cross_above: 0.35
+      cross_below: 0.35
     validation:
-      min_trades: 50  # Ridotto da 100
+      min_trades: 50
       max_trades: 300
       min_bars_history: 50
 
@@ -40,12 +45,12 @@ trading:
       operator: "cross_above"
 
 genetic:
-  population_size: 60  # Ridotto da 120
-  generations: 30  # Ridotto da 100
+  population_size: 60
+  generations: 30
   mutation_rate: 0.35
   elite_size: 4
   tournament_size: 6
-  min_trades: 50  # Ridotto da 100
+  min_trades: 50
   batch_size: 16384
 
   optimizer:

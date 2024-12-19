@@ -190,11 +190,13 @@ class TradingGene:
                 return results
                 
             # Ottieni e valida i parametri dal config con limiti di sicurezza
-            min_bars_between = max(self.config.get("trading.signal_filters.density.min_bars_between", 10), 5)
-            max_signals_percent = min(self.config.get("trading.signal_filters.density.max_signals_percent", 5), 10)
+            min_bars_between = max(self.config.get("trading.signal_filters.density.min_bars_between", 20), 15)
+            max_signals_percent = min(self.config.get("trading.signal_filters.density.max_signals_percent", 0.3), 1)
             # Imposta un limite massimo assoluto al numero di segnali
-            max_signals_absolute = 1000
-            max_signals_per_period = min(len(results) * max_signals_percent // 100, max_signals_absolute)
+            max_signals_absolute = 100
+            # Calcola max_signals_per_period assicurandosi che sia almeno 1
+            signals_from_percent = max(1, int(len(results) * max_signals_percent / 100))
+            max_signals_per_period = min(signals_from_percent, max_signals_absolute)
             
             # Log dei parametri di filtro
             logger.debug(f"Signal density parameters:")
@@ -229,7 +231,33 @@ class TradingGene:
                 if len(keep_indices) >= max_signals_per_period:
                     break
             
-            # Se abbiamo troppi segnali, seleziona in modo casuale
+            # Calcola la correlazione tra i segnali esistenti
+            if len(keep_indices) > 1:
+                # Usa una finestra di 10 periodi intorno ad ogni segnale
+                window_size = 10
+                i = len(keep_indices) - 1
+                while i > 0:
+                    current_idx = keep_indices[i]
+                    prev_idx = keep_indices[i-1]
+                    
+                    # Se i segnali sono troppo vicini, rimuovi il secondo
+                    if current_idx - prev_idx < min_bars_between:
+                        keep_indices.pop(i)
+                        i -= 1
+                        continue
+                        
+                    # Calcola la correlazione tra le finestre
+                    if current_idx + window_size < len(values1) and prev_idx + window_size < len(values1):
+                        window1 = values1[prev_idx:prev_idx+window_size]
+                        window2 = values1[current_idx:current_idx+window_size]
+                        correlation = torch.corrcoef(torch.stack([window1, window2]))[0,1]
+                        
+                        # Se la correlazione è troppo alta, rimuovi il secondo segnale
+                        if correlation > 0.8:  # Alta correlazione
+                            keep_indices.pop(i)
+                    i -= 1
+                            
+            # Se abbiamo ancora troppi segnali dopo il filtro di correlazione, seleziona in modo casuale
             if len(keep_indices) > max_signals_per_period:
                 keep_indices = sorted(random.sample(keep_indices, max_signals_per_period))
             
@@ -301,14 +329,16 @@ class TradingGene:
                         self.config.get("trading.signal_filters.operator_weights.cross_below", 0.35)
                     ]
                 ),
+                # Usa un rapporto risk/reward più conservativo
                 "stop_loss_pct": float(np.random.uniform(
-                    self.config.get("trading.mutation.stop_loss.min", 0.5),
-                    self.config.get("trading.mutation.stop_loss.max", 5.0)
+                    self.config.get("trading.mutation.stop_loss.min", 1.5),
+                    self.config.get("trading.mutation.stop_loss.max", 2.5)
                 )),
+                # Take profit è sempre 2-3 volte lo stop loss
                 "take_profit_pct": float(np.random.uniform(
-                    self.config.get("trading.mutation.take_profit.min", 1.0),
-                    self.config.get("trading.mutation.take_profit.max", 10.0)
-                ))
+                    self.config.get("trading.mutation.stop_loss.min", 1.5),
+                    self.config.get("trading.mutation.stop_loss.max", 2.5)
+                )) * float(np.random.uniform(2.0, 3.0))
             }
             
             logger.debug(f"Randomized DNA: {self.dna}")

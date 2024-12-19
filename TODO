@@ -2,7 +2,7 @@ comando
 
 python cli.py evolve --data data/market_data_BTC_1m.csv > log.txt 2>&1
 
-python cli.py --config config_gpu_arc_fast.yaml --debug evolve > log.txt 2>&1
+python cli.py --config config_gpu_arc.yaml --debug evolve > log.txt 2>&1
 
 python.exe .\download_binance.py --config config_gpu_arc.yaml
 

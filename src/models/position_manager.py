@@ -133,8 +133,8 @@ class PositionManager:
             avg_price_change = torch.sum(price_changes * close_mask).item() / total_closed if total_closed > 0 else 0
             logger.debug(f"PnL calculation summary:")
             logger.debug(f"Closed positions: {total_closed}")
-            logger.debug(f"Average price change: {avg_price_change:.2%}")
-            logger.debug(f"Total PnL: ${total_pnl:.2f}")
+            logger.debug(f"Average price change: {avg_price_change:.8%}")
+            logger.debug(f"Total PnL: ${total_pnl:.8f}")
             
         return pnl
         
@@ -162,7 +162,7 @@ class PositionManager:
         # Verifica capitale disponibile
         position_value = self.position_size_pct * current_equity
         if position_value < 1.0 or current_equity < initial_capital * 0.1:  # Minimo $1 per posizione e 10% del capitale iniziale
-            logger.debug(f"Insufficient capital for new positions (equity: ${current_equity:.2f}, position value: ${position_value:.2f})")
+            logger.debug(f"Insufficient capital for new positions (equity: ${current_equity:.8f}, position value: ${position_value:.8f})")
             return torch.tensor([], dtype=torch.long, device=device), \
                    torch.tensor([], dtype=torch.long, device=device)
         
@@ -186,6 +186,6 @@ class PositionManager:
         # Debug log
         if len(valid_rows) > 0:
             logger.debug(f"Found {len(valid_rows)} entry slots")
-            logger.debug(f"Position value: ${position_value:.2f}")
+            logger.debug(f"Position value: ${position_value:.8f}")
         
         return valid_rows, slot_indices

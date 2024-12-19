@@ -23,14 +23,11 @@ class TradeStats:
         Returns:
             Dizionario con le statistiche calcolate
         """
-        # Trova gli indici dove le posizioni sono state chiuse
-        closed_positions = torch.zeros_like(pnl, dtype=torch.bool)
-        for i in range(1, len(pnl)):
-            if pnl[i] != pnl[i-1]:
-                closed_positions[i] = True
-                
-        # Filtra solo i trade chiusi
-        trades_pnl = pnl[closed_positions]
+        # Trova le posizioni chiuse - una posizione è chiusa quando il suo PnL cambia da 0
+        closed_positions = pnl != 0
+        
+        # Filtra solo i trade chiusi e appiattisci il tensore
+        trades_pnl = pnl[closed_positions].flatten()
         
         # Statistiche base
         total_trades = len(trades_pnl)
@@ -56,7 +53,8 @@ class TradeStats:
         final_equity = min(equity[-1].item(), initial_capital * 1000)  # Limita a 1000x
         min_equity = max(torch.min(equity).item(), initial_capital * 0.01)  # Limita a -99%
         
-        total_pl = final_equity - initial_capital
+        # Calcola il PnL totale sommando il PnL di tutte le posizioni
+        total_pl = pnl.sum().item()  # Somma tutti i PnL
         pl_percentage = (total_pl / initial_capital) * 100
         max_drawdown = ((min_equity - initial_capital) / initial_capital) * 100
         
