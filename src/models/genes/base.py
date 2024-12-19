@@ -217,8 +217,8 @@ class TradingGene:
             if not indices_list:
                 return results
                 
-            # Usa la distanza minima più grande tra min_bars_between e la distanza basata su max_signals
-            min_distance = max(min_bars_between, len(results) // max_signals_per_period)
+            # Calcola la distanza minima basata sul numero di segnali desiderato
+            min_distance = min(min_bars_between, len(results) // max_signals_per_period)
             
             # Seleziona i segnali mantenendo la distanza minima e il numero massimo
             keep_indices = [indices_list[0]]  # Mantieni il primo segnale
@@ -229,10 +229,9 @@ class TradingGene:
                 if len(keep_indices) >= max_signals_per_period:
                     break
             
-            # Se abbiamo troppi segnali, riduci uniformemente
+            # Se abbiamo troppi segnali, seleziona in modo casuale
             if len(keep_indices) > max_signals_per_period:
-                keep_step = len(keep_indices) // max_signals_per_period
-                keep_indices = keep_indices[::keep_step][:max_signals_per_period]
+                keep_indices = sorted(random.sample(keep_indices, max_signals_per_period))
             
             # Crea il nuovo tensore di risultati con la dimensione corretta
             new_results = torch.zeros(expected_size, dtype=torch.bool, device=target_device)

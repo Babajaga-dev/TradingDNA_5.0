@@ -22,12 +22,12 @@ class SimulationProcessor:
         self.device_manager = device_manager
         self.config = config
         
+        # Trading parameters
+        self.initial_capital = config.get("simulator.initial_capital", 10000)
+        
         # Managers
         self.position_manager = PositionManager(config)
         self.risk_manager = RiskManager(config)
-        
-        # Trading parameters
-        self.initial_capital = config.get("simulator.initial_capital", 10000)
         
         # Computation type
         self.compute_dtype = torch.float32
@@ -159,16 +159,26 @@ class SimulationProcessor:
                             free_slots = (~position_tensors["active_positions"][t:t+1]).nonzero(as_tuple=True)[1]  # Usa l'indice 1 per gli slot
                             if len(free_slots) > 0:
                                 slot_idx = free_slots[0]
-                                # Apri nuova posizione
-                                position_tensors["active_positions"][t:t+1, slot_idx] = True
-                                position_tensors["entry_prices"][t:t+1, slot_idx] = prices[t]
-                                position_tensors["position_sizes"][t:t+1, slot_idx] = self.position_manager.position_size_pct
-                                
-                                if logger.isEnabledFor(logging.DEBUG):
-                                    logger.debug(
-                                        f"t={t} - New position: price=${prices[t]:.2f}, "
-                                        f"size={self.position_manager.position_size_pct:.1%}"
-                                    )
+                                # Verifica validità della posizione
+                                if self.risk_manager.validate_position_size(
+                                    self.position_manager.position_size_pct, 
+                                    current_equity
+                                ):
+                                    # Apri nuova posizione
+                                    position_tensors["active_positions"][t:t+1, slot_idx] = True
+                                    position_tensors["entry_prices"][t:t+1, slot_idx] = prices[t]
+                                    position_tensors["position_sizes"][t:t+1, slot_idx] = self.position_manager.position_size_pct
+                                    
+                                    if logger.isEnabledFor(logging.DEBUG):
+                                        logger.debug(
+                                            f"t={t} - New position: price=${prices[t]:.2f}, "
+                                            f"size={self.position_manager.position_size_pct:.1%}"
+                                        )
+                                else:
+                                    if logger.isEnabledFor(logging.DEBUG):
+                                        logger.debug(
+                                            f"t={t} - Invalid position size for equity ${current_equity:.2f}"
+                                        )
                 
                 # Aggiorna output tensors
                 output["position_active"][t] = position_tensors["active_positions"][t]  # Copia direttamente la riga delle posizioni

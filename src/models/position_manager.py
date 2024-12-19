@@ -15,12 +15,13 @@ class PositionManager:
             config: Configurazione con i parametri di trading
         """
         # Trading parameters
-        self.position_size_pct = config.get("trading.position.size_pct", 0.05)  # default 5%
+        trading_config = config.get("trading", {}).get("position", {})
+        self.position_size_pct = trading_config.get("size_pct", 0.05)  # default 5%
         self.max_positions = self._calculate_max_positions()
         
         # Risk parameters
-        self.stop_loss_pct = config.get("trading.position.stop_loss_pct", 0.015)  # default 1.5%
-        self.take_profit_pct = config.get("trading.position.take_profit_pct", 0.03)  # default 3.0%
+        self.stop_loss_pct = trading_config.get("stop_loss_pct", 0.015)  # default 1.5%
+        self.take_profit_pct = trading_config.get("take_profit_pct", 0.03)  # default 3.0%
         
         logger.debug(f"Initialized PositionManager:")
         logger.debug(f"Position size: {self.position_size_pct:.1%}")
@@ -159,9 +160,9 @@ class PositionManager:
         device = entry_signals.device
         
         # Verifica capitale disponibile
-        position_value = self.position_size_pct * initial_capital
-        if position_value < 1.0:  # Minimo $1 per posizione
-            logger.debug("Insufficient capital for new positions")
+        position_value = self.position_size_pct * current_equity
+        if position_value < 1.0 or current_equity < initial_capital * 0.1:  # Minimo $1 per posizione e 10% del capitale iniziale
+            logger.debug(f"Insufficient capital for new positions (equity: ${current_equity:.2f}, position value: ${position_value:.2f})")
             return torch.tensor([], dtype=torch.long, device=device), \
                    torch.tensor([], dtype=torch.long, device=device)
         

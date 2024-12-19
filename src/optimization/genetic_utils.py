@@ -47,13 +47,24 @@ def calculate_fitness(metrics: Dict[str, Any],
         Score di fitness
     """
     try:
-        if metrics["total_trades"] < min_trades:
-            return 0.0
-            
         profit_weights = weights.get("profit_score", {})
         quality_weights = weights.get("quality_score", {})
         final_weights = weights.get("final_weights", {})
         penalties_config = weights.get("penalties", {})
+        
+        # Da un punteggio base anche con pochi trade
+        if metrics["total_trades"] < min_trades:
+            trade_ratio = max(0.1, metrics["total_trades"] / min_trades)
+            base_score = 0.1 * trade_ratio  # Punteggio base proporzionale al numero di trade
+            
+            if metrics["total_trades"] > 0:
+                # Aggiungi bonus se i trade sono profittevoli
+                if metrics["total_pnl"] > 0:
+                    base_score *= 1.5
+                if metrics["win_rate"] > 0.5:
+                    base_score *= 1.3
+                    
+            return base_score
         
         # Calcolo profit score
         profit_score = (
