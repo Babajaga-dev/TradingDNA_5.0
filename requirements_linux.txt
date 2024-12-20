@@ -8,3 +8,7 @@ typing-extensions
 tqdm
 matplotlib
 scikit-learn
+
+conda install TA-Lib
+pip install TA-Lib
+watch -n0.1 nvidia-smi

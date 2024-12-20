@@ -172,3 +172,4 @@ evolution_state.pkl
 # Project specific
 Whl/
 data/market_data_*.csv
+log.txt

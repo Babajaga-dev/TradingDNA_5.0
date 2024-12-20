@@ -152,7 +152,7 @@ genetic:
   elite_size: 4
   tournament_size: 6
   min_trades: 10
-  batch_size: 16384
+  batch_size: 8192
 
   optimizer:
     gpu_backend: "arc"
